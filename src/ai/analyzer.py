@@ -8,7 +8,7 @@ import structlog
 
 from ..config import AIConfig
 from ..storage.models import Article, AnalyzedArticle
-from .prompts import SYSTEM_PROMPT, FILTER_PROMPT, TOP_SELECTION_PROMPT
+from .prompts import SYSTEM_PROMPT, FILTER_PROMPT, TOP_SELECTION_PROMPT, MERGE_PROMPT
 
 logger = structlog.get_logger()
 
@@ -36,14 +36,15 @@ class ArticleAnalyzer:
         批量分析文章
         
         1. 分批评分和摘要
-        2. 选出 TOP 精选文章
+        2. 合并同类文章
+        3. 选出 TOP 精选文章
         """
         if not articles:
             return []
         
         logger.info("analyzing_articles", count=len(articles))
         
-        # 分批处理
+        # 第一步：分批处理评分和摘要
         all_analyzed = []
         for i in range(0, len(articles), batch_size):
             batch = articles[i:i + batch_size]
@@ -56,25 +57,38 @@ class ArticleAnalyzer:
         # 按分数排序
         all_analyzed.sort(key=lambda x: x.score, reverse=True)
         
-        # 选出 TOP 精选
-        if len(all_analyzed) > top_pick_count:
+        # 过滤低分文章（< 5 分不进入后续流程）
+        qualified_articles = [a for a in all_analyzed if a.score >= 5]
+        logger.info("qualified_articles", count=len(qualified_articles))
+        
+        if not qualified_articles:
+            return all_analyzed
+        
+        # 第二步：合并同类文章
+        merged_articles = await self._merge_similar_articles(qualified_articles)
+        logger.info("articles_merged", 
+                   before=len(qualified_articles), 
+                   after=len(merged_articles))
+        
+        # 第三步：从合并后的文章中选出 TOP 精选
+        if len(merged_articles) > top_pick_count:
             top_indices = await self._select_top_picks(
-                all_analyzed, 
+                merged_articles, 
                 top_pick_count
             )
             for idx in top_indices:
-                if 0 <= idx < len(all_analyzed):
-                    all_analyzed[idx].is_top_pick = True
+                if 0 <= idx < len(merged_articles):
+                    merged_articles[idx].is_top_pick = True
         else:
             # 文章太少，全部作为精选
-            for article in all_analyzed:
+            for article in merged_articles:
                 article.is_top_pick = True
         
         logger.info("analysis_complete",
-                   total=len(all_analyzed),
-                   top_picks=sum(1 for a in all_analyzed if a.is_top_pick))
+                   total=len(merged_articles),
+                   top_picks=sum(1 for a in merged_articles if a.is_top_pick))
         
-        return all_analyzed
+        return merged_articles
     
     async def _analyze_batch(self, articles: list[Article]) -> list[AnalyzedArticle]:
         """分析一批文章"""
@@ -124,6 +138,94 @@ class ArticleAnalyzer:
         except Exception as e:
             logger.error("ai_analysis_failed", error=str(e))
             return self._fallback_analyze(articles)
+    
+    async def _merge_similar_articles(
+        self, 
+        articles: list[AnalyzedArticle]
+    ) -> list[AnalyzedArticle]:
+        """合并同类文章"""
+        if len(articles) <= 5:
+            # 文章太少，无需合并
+            return articles
+        
+        # 只取前 50 篇进行合并分析（避免 token 过多）
+        candidates = articles[:50]
+        
+        # 构建文章文本
+        articles_text = self._format_analyzed_for_merge(candidates)
+        
+        prompt = MERGE_PROMPT.format(articles_text=articles_text)
+        
+        try:
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt},
+                ],
+                max_tokens=2000,
+                temperature=0.2,
+            )
+            
+            content = response.choices[0].message.content
+            result = self._parse_json_response(content)
+            
+            if not result or "merged_groups" not in result:
+                logger.warning("merge_response_invalid", content=content[:200])
+                return articles
+            
+            # 构建合并后的文章列表
+            merged = []
+            used_indices = set()
+            
+            for group in result["merged_groups"]:
+                rep_idx = group.get("representative_index", 0)
+                merged_indices = group.get("merged_indices", [rep_idx])
+                merged_summary = group.get("merged_summary", "")
+                
+                if rep_idx >= len(candidates):
+                    continue
+                
+                # 获取代表文章
+                rep_article = candidates[rep_idx]
+                
+                # 如果有合并，更新摘要并记录合并数量
+                if len(merged_indices) > 1:
+                    rep_article.ai_summary = merged_summary or rep_article.ai_summary
+                    rep_article.reasoning = f"[合并{len(merged_indices)}篇相似报道] {group.get('merge_reason', '')}"
+                
+                # 记录使用的索引
+                for idx in merged_indices:
+                    used_indices.add(idx)
+                
+                merged.append(rep_article)
+            
+            # 添加未被合并的文章（在前50名之外的）
+            for i, article in enumerate(articles):
+                if i >= 50 or i not in used_indices:
+                    if i >= 50:
+                        merged.append(article)
+            
+            logger.info("merge_complete", 
+                       original=len(candidates),
+                       merged=len(merged))
+            
+            return merged
+        
+        except Exception as e:
+            logger.error("merge_failed", error=str(e))
+            return articles
+    
+    def _format_analyzed_for_merge(self, articles: list[AnalyzedArticle]) -> str:
+        """格式化文章用于合并分析"""
+        lines = []
+        for i, article in enumerate(articles):
+            lines.append(f"""
+[{i}] 标题: {article.title}
+来源: {article.source} | 评分: {article.score:.1f} | 标签: {article.tags_display}
+摘要: {article.ai_summary}
+""")
+        return "\n".join(lines)
     
     async def _select_top_picks(
         self, 

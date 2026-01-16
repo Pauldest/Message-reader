@@ -101,3 +101,42 @@ BATCH_SUMMARY_PROMPT = """请为以下文章生成一句话核心摘要，帮助
 }}
 ```"""
 
+MERGE_PROMPT = """请分析以下已评分的文章列表，找出报道同一事件或讨论同一话题的文章，并将它们合并。
+
+文章列表：
+{articles_text}
+
+【合并规则】
+1. 多篇文章报道同一新闻事件 → 合并为一条，保留最高分作为代表
+2. 多篇文章讨论同一技术/产品 → 合并为一条，保留分析最深入的
+3. 不同角度、不同事件的文章 → 不合并，各自保留
+4. 合并后的文章应该生成一个综合摘要
+
+请返回合并结果，严格按照 JSON 格式：
+```json
+{{
+  "merged_groups": [
+    {{
+      "representative_index": 0,
+      "merged_indices": [0, 5, 12],
+      "merged_summary": "综合多篇报道的核心摘要",
+      "merge_reason": "这3篇文章都在报道同一事件"
+    }},
+    {{
+      "representative_index": 3,
+      "merged_indices": [3],
+      "merged_summary": "保持原摘要",
+      "merge_reason": "独立话题，无需合并"
+    }}
+  ]
+}}
+```
+
+注意：
+1. representative_index 是合并后保留的代表文章索引
+2. merged_indices 包含被合并的所有文章索引（包括代表文章）
+3. 如果文章主题独立，merged_indices 就只包含它自己
+4. 每篇文章只能出现在一个 merged_group 中
+5. 所有文章都必须被分配到某个 merged_group"""
+
+
