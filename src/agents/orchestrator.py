@@ -8,12 +8,16 @@ import structlog
 from ..config import AppConfig
 from ..models.article import Article, EnrichedArticle
 from ..models.agent import AgentContext, AgentOutput, AgentTrace, AnalysisMode
+from ..models.information import InformationUnit
 from ..services.llm import LLMService
 from ..storage.vector_store import VectorStore
+from ..storage.information_store import InformationStore
 
 from .collector import CollectorAgent
 from .librarian import LibrarianAgent
 from .editor import EditorAgent
+from .extractor import InformationExtractorAgent
+from .merger import InformationMergerAgent
 from .analysts import SkepticAnalyst, EconomistAnalyst, DetectiveAnalyst
 from .trace_manager import TraceManager
 
@@ -56,6 +60,15 @@ class AnalysisOrchestrator:
             "economist": EconomistAnalyst(self.llm_service),
             "detective": DetectiveAnalyst(self.llm_service),
         }
+        
+        # 新架构组件
+        self.info_store: Optional[InformationStore] = None
+        self.extractor = InformationExtractorAgent(self.llm_service)
+        self.merger = InformationMergerAgent(self.llm_service)
+
+    def set_information_store(self, store: InformationStore):
+        """注入 InformationStore"""
+        self.info_store = store
     
     async def analyze_article(
         self, 
@@ -313,15 +326,82 @@ class AnalysisOrchestrator:
                 error=trace.error,
             )
     
+    async def process_article_information_centric(self, article: Article) -> list[InformationUnit]:
+        """
+        以信息为中心的处理流程
+        1. Extract: 文章 -> 信息单元列表
+        2. Merge: 与库中现有单元去重/合并
+        3. Save: 持久化
+        """
+        if not self.info_store:
+            logger.warning("information_store_not_configured")
+            return []
+            
+        logger.info("processing_info_centric", title=article.title)
+        
+        # Context
+        context = AgentContext(
+            original_article=article,
+            analysis_mode=AnalysisMode.DEEP
+        )
+        if self.trace_manager:
+            self.trace_manager.start_session(article.url, article.title + " [INFO_FLOW]")
+
+        try:
+            # 1. Extract
+            units = await self.extractor.extract(article, context)
+            logger.info("extracted_units", count=len(units))
+            
+            final_units = []
+            
+            for unit in units:
+                # 2. Check & Merge
+                # 简单指纹匹配 (MVP)
+                # TODO: 向量相似度搜索
+                existing = self.info_store.get_unit_by_fingerprint(unit.fingerprint)
+                
+                if existing:
+                    logger.info("merging_existing_unit", fingerprint=unit.fingerprint)
+                    # Merge Logic
+                    merged = await self.merger.merge([existing, unit])
+                    self.info_store.save_unit(merged)
+                    final_units.append(merged)
+                    
+                    if self.trace_manager:
+                        self.trace_manager.save_agent_output(
+                            agent_name="Merger",
+                            input_data={"unit_new": unit.title, "unit_exist": existing.title},
+                            output_data={"merged": merged.title},
+                            duration_seconds=0, token_usage={}
+                        )
+                else:
+                    # New Unit
+                    self.info_store.save_unit(unit)
+                    final_units.append(unit)
+            
+            if self.trace_manager:
+                self.trace_manager.end_session()
+                
+            return final_units
+            
+        except Exception as e:
+            logger.error("info_flow_failed", error=str(e))
+            if self.trace_manager:
+                self.trace_manager.end_session()
+            return []
+
     def get_stats(self) -> dict:
         """获取协调器统计信息"""
         return {
             "vector_store": self.vector_store.get_stats() if self.vector_store else {},
             "trace_enabled": self.trace_manager is not None,
+            "info_store_enabled": self.info_store is not None,
             "agents": [
                 self.collector.name,
                 self.librarian.name,
                 self.editor.name,
+                self.extractor.name,
+                self.merger.name,
             ] + list(self.analysts.keys()),
         }
 

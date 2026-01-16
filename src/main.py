@@ -30,7 +30,7 @@ try:
     from .agents import AnalysisOrchestrator
     from .models.agent import AnalysisMode
     from .models.article import Article as NewArticle, EnrichedArticle
-    from .storage import Database, DigestArticle, DailyDigest
+    from .storage import Database, DigestArticle, DailyDigest, InformationStore
     from .storage.models import Article as LegacyArticle, AnalyzedArticle
     from .notifier import EmailSender
     from .scheduler import Scheduler
@@ -41,7 +41,7 @@ except ImportError:
     from src.agents import AnalysisOrchestrator
     from src.models.agent import AnalysisMode
     from src.models.article import Article as NewArticle, EnrichedArticle
-    from src.storage import Database, DigestArticle, DailyDigest
+    from src.storage import Database, DigestArticle, DailyDigest, InformationStore
     from src.storage.models import Article as LegacyArticle, AnalyzedArticle
     from src.notifier import EmailSender
     from src.scheduler import Scheduler
@@ -77,6 +77,10 @@ class RSSReaderService:
             analysis_mode=self.analysis_mode.value,
             vector_store=self.orchestrator.get_stats().get("vector_store", {}),
         )
+        
+        # 初始化信息存储并注入协调器
+        self.info_store = InformationStore(self.db)
+        self.orchestrator.set_information_store(self.info_store)
     
     async def fetch_and_analyze(self, limit: int = None):
         """抓取并分析文章
@@ -131,10 +135,18 @@ class RSSReaderService:
                 legacy_article = self._convert_to_legacy_article(article)
                 self.db.save_analyzed_article(legacy_article)
             
+            # 7. 🆕 信息为中心的处理流程 (Beta)
+            logger.info("starting_info_centric_processing")
+            info_processing_count = 0
+            for article in new_format_articles:
+                units = await self.orchestrator.process_article_information_centric(article)
+                info_processing_count += len(units)
+            
             logger.info("fetch_cycle_complete",
                        fetched=len(articles),
                        new=len(new_articles),
                        analyzed=len(enriched_articles),
+                       info_units_created=info_processing_count,
                        top_picks=sum(1 for a in enriched_articles if a.is_top_pick))
         
         except Exception as e:
@@ -176,52 +188,125 @@ class RSSReaderService:
                 enriched_articles.append(enriched)
             
             # 🆕 使用 Curator AI 智能筛选
-            from src.agents import CuratorAgent
+            # 优先尝试基于 Information Units 的简报
+            from src.agents import CuratorAgent, InformationCuratorAgent
             from src.services.llm import LLMService
             
-            curator = CuratorAgent(LLMService(self.config.ai))
-            curation_result = await curator.curate(
-                enriched_articles,
-                max_articles=self.config.filter.max_articles_per_digest,
-            )
+            # Check for unsent information units
+            unsent_units = self.info_store.get_unsent_units(limit=50)
             
-            # 构建简报
-            top_picks = []
-            for article in curation_result["top_picks"]:
-                top_picks.append(DigestArticle(
-                    title=article.title,
-                    url=article.url,
-                    source=article.source,
-                    category=article.category,
-                    score=article.overall_score,
-                    summary=article.ai_summary or article.summary,
-                    reasoning="",
-                    is_top_pick=True,
-                    tags=article.tags,
-                ))
+            if len(unsent_units) >= 5:
+                # Use Information Centric Curation
+                logger.info("generating_info_centric_digest", units=len(unsent_units))
+                info_curator = InformationCuratorAgent(LLMService(self.config.ai))
+                curation_result = await info_curator.curate(
+                    unsent_units,
+                    max_top_picks=self.config.filter.max_articles_per_digest
+                )
+                
+                # Build digest from Information Curation
+                top_picks = []
+                for item in curation_result["top_picks"]:
+                    # Format as HTML for email
+                    presentation = item.get("presentation", {})
+                    summary_html = f"""
+                    <div style="margin-bottom: 8px;"><strong>📝 事实摘要：</strong>{presentation.get('summary', '')}</div>
+                    <div style="margin-bottom: 8px; color: #4b5563;"><strong>💡 深度分析：</strong>{presentation.get('analysis', '')}</div>
+                    <div style="color: #ea580c;"><strong>🌊 潜在影响：</strong>{presentation.get('impact', '')}</div>
+                    """
+                    
+                    top_picks.append(DigestArticle(
+                        title=item.get("display_title", ""),
+                        url=self._get_unit_url(item.get("id"), unsent_units), # Helper needed
+                        source=" | ".join(self._get_unit_sources(item.get("id"), unsent_units)),
+                        category="深度精选",
+                        score=(item.get("reasoning", {}).get("score", 9.0) if isinstance(item.get("reasoning"), dict) else 9.0),
+                        summary=summary_html,
+                        reasoning=item.get("reasoning", "") if isinstance(item.get("reasoning"), str) else "",
+                        is_top_pick=True,
+                        tags=[], # Tags not in output yet, maybe skip or fetch
+                    ))
+                    
+                other_articles = []
+                for item in curation_result["quick_reads"]:
+                    other_articles.append(DigestArticle(
+                        title=item.get("display_title", ""),
+                        url=self._get_unit_url(item.get("id"), unsent_units),
+                        source="快速浏览",
+                        category="资讯",
+                        score=7.0,
+                        summary=item.get("one_line_summary", ""),
+                        reasoning="",
+                        is_top_pick=False,
+                        tags=[],
+                    ))
+                    
+                # Mark units as sent
+                sent_ids = [item.get("id") for item in curation_result["top_picks"] + curation_result["quick_reads"]]
+                self.info_store.mark_units_sent(sent_ids)
+                
+                # Create Digest Object
+                digest = DailyDigest(
+                    date=datetime.now(),
+                    top_picks=top_picks,
+                    other_articles=other_articles,
+                    total_fetched=len(unsent_units), # Approx
+                    total_analyzed=len(unsent_units),
+                    total_filtered=len(top_picks) + len(other_articles),
+                )
             
-            other_articles = []
-            for article in curation_result["quick_reads"]:
-                other_articles.append(DigestArticle(
-                    title=article.title,
-                    url=article.url,
-                    source=article.source,
-                    category=article.category,
-                    score=article.overall_score,
-                    summary=article.ai_summary or article.summary,
-                    reasoning="",
-                    is_top_pick=False,
-                    tags=article.tags,
-                ))
+            else:
+                # Fallback to Old Article-Centric Curation
+                logger.info("fallback_to_article_curation", reason="not_enough_info_units")
+                
+                curator = CuratorAgent(LLMService(self.config.ai))
+                curation_result = await curator.curate(
+                    enriched_articles,
+                    max_articles=self.config.filter.max_articles_per_digest,
+                )
             
-            digest = DailyDigest(
-                date=datetime.now(),
-                top_picks=top_picks,
-                other_articles=other_articles,
-                total_fetched=len(db_articles),
-                total_analyzed=len(db_articles),
-                total_filtered=len(top_picks) + len(other_articles),
-            )
+                # 构建简报 (Old Logic)
+                top_picks = []
+                for article in curation_result["top_picks"]:
+                    top_picks.append(DigestArticle(
+                        title=article.title,
+                        url=article.url,
+                        source=article.source,
+                        category=article.category,
+                        score=article.overall_score,
+                        summary=article.ai_summary or article.summary,
+                        reasoning="",
+                        is_top_pick=True,
+                        tags=article.tags,
+                    ))
+                
+                other_articles = []
+                for article in curation_result["quick_reads"]:
+                    other_articles.append(DigestArticle(
+                        title=article.title,
+                        url=article.url,
+                        source=article.source,
+                        category=article.category,
+                        score=article.overall_score,
+                        summary=article.ai_summary or article.summary,
+                        reasoning="",
+                        is_top_pick=False,
+                        tags=article.tags,
+                    ))
+                
+                digest = DailyDigest(
+                    date=datetime.now(),
+                    top_picks=top_picks,
+                    other_articles=other_articles,
+                    total_fetched=len(db_articles),
+                    total_analyzed=len(db_articles),
+                    total_filtered=len(top_picks) + len(other_articles),
+                )
+                
+                # Mark Articles Sent (Old Logic)
+                if True: # Will be handled below
+                    sent_urls = [a.url for a in top_picks + other_articles]
+                    self.db.mark_articles_sent(sent_urls)
             
             logger.info(
                 "curation_complete",
@@ -232,17 +317,17 @@ class RSSReaderService:
             )
             
             # 发送邮件
+            # 发送邮件
             success = await self.email_sender.send_digest(digest)
             
             if success:
-                # 只标记被选中的文章为已发送
-                sent_urls = [a.url for a in top_picks + other_articles]
-                self.db.mark_articles_sent(sent_urls)
                 logger.info("digest_sent_successfully",
                            top_picks=len(top_picks),
                            other=len(other_articles))
             else:
                 logger.error("digest_send_failed")
+                
+
         
         except Exception as e:
             logger.error("digest_preparation_failed", error=str(e))
@@ -345,6 +430,20 @@ class RSSReaderService:
             parts.append(f"风险警示: {len(enriched.risk_warnings)}项")
         
         return " | ".join(parts) if parts else ""
+
+    def _get_unit_url(self, unit_id: str, units: list) -> str:
+        """Helper to get primary URL from unit ID"""
+        for u in units:
+            if u.id == unit_id:
+                return u.primary_source
+        return "#"
+
+    def _get_unit_sources(self, unit_id: str, units: list) -> list:
+        """Helper to get source names"""
+        for u in units:
+            if u.id == unit_id:
+                return list(set(s.source_name for s in u.sources))[:3]
+        return []
 
 
 def parse_args():

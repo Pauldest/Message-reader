@@ -6,6 +6,9 @@ from .collector import CollectorAgent
 from .librarian import LibrarianAgent
 from .editor import EditorAgent
 from .curator import CuratorAgent
+from .extractor import InformationExtractorAgent
+from .merger import InformationMergerAgent
+from .info_curator import InformationCuratorAgent
 from .analysts import SkepticAnalyst, EconomistAnalyst, DetectiveAnalyst
 from .trace_manager import TraceManager
 
@@ -16,6 +19,7 @@ __all__ = [
     "LibrarianAgent",
     "EditorAgent",
     "CuratorAgent",
+    "InformationCuratorAgent",
     "SkepticAnalyst",
     "EconomistAnalyst",
     "DetectiveAnalyst",

@@ -65,7 +65,87 @@ class Database:
             
             conn.commit()
         
+        conn.commit()
+        
+        # 初始化新的信息架构表
+        self._init_information_tables()
+        
         logger.info("database_initialized", path=str(self.db_path))
+    
+    def _init_information_tables(self):
+        """初始化信息为中心的架构表"""
+        with self._get_conn() as conn:
+            # 1. 信息单元表
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS information_units (
+                    id TEXT PRIMARY KEY,
+                    fingerprint TEXT UNIQUE NOT NULL,
+                    type TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    content TEXT,
+                    summary TEXT,
+                    analysis_content TEXT,
+                    key_insights TEXT,     -- JSON array
+                    analysis_depth_score REAL DEFAULT 0,
+                    who TEXT,              -- JSON array
+                    what TEXT,
+                    when_time TEXT,
+                    where_place TEXT,
+                    why TEXT,
+                    how TEXT,
+                    primary_source TEXT,
+                    extraction_confidence REAL,
+                    credibility_score REAL,
+                    importance_score REAL,
+                    sentiment TEXT,
+                    impact_assessment TEXT,
+                    related_unit_ids TEXT, -- JSON array
+                    entities TEXT,         -- JSON array
+                    tags TEXT,             -- JSON array
+                    merged_count INTEGER DEFAULT 1,
+                    is_sent BOOLEAN DEFAULT FALSE,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    unique(id)
+                )
+            """)
+            
+            # 2. 来源引用表
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS source_references (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    unit_fingerprint TEXT NOT NULL,  -- 关联到 InformationUnit.fingerprint (稳定标识)
+                    url TEXT NOT NULL,
+                    title TEXT,
+                    source_name TEXT,
+                    published_at TIMESTAMP,
+                    excerpt TEXT,
+                    credibility_tier TEXT,
+                    FOREIGN KEY(unit_fingerprint) REFERENCES information_units(fingerprint)
+                )
+            """)
+            
+            # 3. 信息关联表
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS unit_relations (
+                    unit_id_1 TEXT NOT NULL,
+                    unit_id_2 TEXT NOT NULL,
+                    relation_type TEXT NOT NULL,
+                    similarity_score REAL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (unit_id_1, unit_id_2),
+                    FOREIGN KEY(unit_id_1) REFERENCES information_units(id),
+                    FOREIGN KEY(unit_id_2) REFERENCES information_units(id)
+                )
+            """)
+            
+            # 索引
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_info_fingerprint ON information_units(fingerprint)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_info_created ON information_units(created_at)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_info_score ON information_units(importance_score)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_source_unit ON source_references(unit_fingerprint)")
+            
+            conn.commit()
     
     def article_exists(self, url: str) -> bool:
         """检查文章是否已存在"""
