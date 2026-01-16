@@ -1,4 +1,4 @@
-"""RSS AI Reader - 主程序入口"""
+"""RSS AI Reader - 主程序入口 (Multi-Agent Version)"""
 
 import argparse
 import asyncio
@@ -19,8 +19,11 @@ structlog.configure(
 
 from .config import get_config, reload_config, AppConfig
 from .fetcher import RSSParser, ContentExtractor
-from .ai import ArticleAnalyzer
-from .storage import Database, AnalyzedArticle, DigestArticle, DailyDigest
+from .agents import AnalysisOrchestrator
+from .models.agent import AnalysisMode
+from .models.article import Article as NewArticle, EnrichedArticle
+from .storage import Database, DigestArticle, DailyDigest
+from .storage.models import Article as LegacyArticle, AnalyzedArticle
 from .notifier import EmailSender
 from .scheduler import Scheduler
 
@@ -28,25 +31,37 @@ logger = structlog.get_logger()
 
 
 class RSSReaderService:
-    """RSS 阅读器服务"""
+    """RSS 阅读器服务 (Multi-Agent Version)"""
     
-    def __init__(self, config: AppConfig):
+    def __init__(self, config: AppConfig, analysis_mode: str = "deep"):
         self.config = config
+        
+        # 解析分析模式
+        self.analysis_mode = AnalysisMode(analysis_mode)
         
         # 初始化组件
         self.db = Database(config.storage.database_path)
         self.rss_parser = RSSParser()
         self.content_extractor = ContentExtractor()
-        self.analyzer = ArticleAnalyzer(config.ai)
+        
+        # 🆕 多智能体分析器
+        self.orchestrator = AnalysisOrchestrator(config)
+        
         self.email_sender = EmailSender(config.email)
         self.scheduler = Scheduler(config.schedule)
         
         # 运行状态
         self._running = False
+        
+        logger.info(
+            "service_initialized",
+            analysis_mode=self.analysis_mode.value,
+            vector_store=self.orchestrator.get_stats().get("vector_store", {}),
+        )
     
     async def fetch_and_analyze(self):
         """抓取并分析文章"""
-        logger.info("starting_fetch_cycle")
+        logger.info("starting_fetch_cycle", mode=self.analysis_mode.value)
         
         try:
             # 1. 抓取 RSS
@@ -71,28 +86,33 @@ class RSSReaderService:
             # 3. 提取正文
             articles_with_content = await self.content_extractor.extract_all(new_articles)
             
-            # 4. 获取最近已发送的文章（用于跨日去重）
-            recent_history = self.db.get_recent_sent_articles(days=3, limit=50)
-            logger.info("recent_history_loaded", count=len(recent_history))
+            # 4. 转换为新的 Article 模型
+            new_format_articles = [
+                self._convert_to_new_article(a) for a in articles_with_content
+            ]
             
-            # 5. AI 分析（会使用历史避免重复话题）
-            analyzed = await self.analyzer.analyze_batch(
-                articles_with_content,
-                top_pick_count=self.config.filter.top_pick_count,
-                recent_history=recent_history,
+            # 5. 🆕 多智能体分析
+            enriched_articles = await self.orchestrator.analyze_batch(
+                new_format_articles,
+                mode=self.analysis_mode,
+                max_concurrent=3,
             )
             
             # 6. 保存到数据库
-            for article in analyzed:
-                self.db.save_analyzed_article(article)
+            for article in enriched_articles:
+                legacy_article = self._convert_to_legacy_article(article)
+                self.db.save_analyzed_article(legacy_article)
             
             logger.info("fetch_cycle_complete",
                        fetched=len(articles),
                        new=len(new_articles),
-                       analyzed=len(analyzed))
+                       analyzed=len(enriched_articles),
+                       top_picks=sum(1 for a in enriched_articles if a.is_top_pick))
         
         except Exception as e:
             logger.error("fetch_cycle_failed", error=str(e))
+            import traceback
+            traceback.print_exc()
     
     async def send_daily_digest(self):
         """发送每日简报"""
@@ -167,7 +187,7 @@ class RSSReaderService:
     
     async def run(self):
         """启动服务"""
-        logger.info("starting_service")
+        logger.info("starting_service", mode=self.analysis_mode.value)
         self._running = True
         
         # 添加定时任务
@@ -194,20 +214,85 @@ class RSSReaderService:
     def stop(self):
         """停止服务"""
         self._running = False
+    
+    def _convert_to_new_article(self, legacy: LegacyArticle) -> NewArticle:
+        """将旧版 Article 转换为新版"""
+        return NewArticle(
+            url=legacy.url,
+            title=legacy.title,
+            content=legacy.content,
+            summary=legacy.summary,
+            source=legacy.source,
+            category=legacy.category,
+            author=legacy.author,
+            published_at=legacy.published_at,
+            fetched_at=legacy.fetched_at,
+        )
+    
+    def _convert_to_legacy_article(self, enriched: EnrichedArticle) -> AnalyzedArticle:
+        """将 EnrichedArticle 转换为旧版 AnalyzedArticle（用于数据库存储）"""
+        return AnalyzedArticle(
+            url=enriched.url,
+            title=enriched.title,
+            content=enriched.content,
+            summary=enriched.summary,
+            source=enriched.source,
+            category=enriched.category,
+            author=enriched.author,
+            published_at=enriched.published_at,
+            fetched_at=enriched.fetched_at,
+            score=enriched.overall_score,
+            ai_summary=enriched.ai_summary,
+            is_top_pick=enriched.is_top_pick,
+            reasoning=self._build_reasoning(enriched),
+            tags=enriched.tags,
+        )
+    
+    def _build_reasoning(self, enriched: EnrichedArticle) -> str:
+        """从 EnrichedArticle 构建推理摘要"""
+        parts = []
+        
+        # 可信度
+        if enriched.source_credibility:
+            parts.append(f"信源: {enriched.source_credibility.tier}")
+        
+        # 影响
+        if enriched.impact_analysis and enriched.impact_analysis.direct_impact:
+            parts.append(f"直接影响: {len(enriched.impact_analysis.direct_impact)}项")
+        
+        # 市场情绪
+        if enriched.market_sentiment:
+            parts.append(f"市场: {enriched.market_sentiment.overall}")
+        
+        # 风险
+        if enriched.risk_warnings:
+            parts.append(f"风险警示: {len(enriched.risk_warnings)}项")
+        
+        return " | ".join(parts) if parts else ""
 
 
 def parse_args():
     """解析命令行参数"""
     parser = argparse.ArgumentParser(
-        description="RSS AI Reader - 智能 RSS 阅读器",
+        description="RSS AI Reader - 多智能体智能 RSS 阅读器",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  python -m src.main                    # 启动服务
-  python -m src.main --once             # 运行一次
-  python -m src.main --once --dry-run   # 测试运行（不发送邮件）
-  python -m src.main --test-email       # 发送测试邮件
+  python -m src.main                         # 启动服务（深度分析模式）
+  python -m src.main --mode quick            # 快速分析模式
+  python -m src.main --mode standard         # 标准分析模式
+  python -m src.main --once                  # 运行一次
+  python -m src.main --once --dry-run        # 测试运行（不发送邮件）
+  python -m src.main --test-email            # 发送测试邮件
         """
+    )
+    
+    parser.add_argument(
+        "--mode", "-m",
+        type=str,
+        choices=["quick", "standard", "deep"],
+        default="deep",
+        help="分析模式: quick(快速), standard(标准), deep(深度)"
     )
     
     parser.add_argument(
@@ -249,7 +334,7 @@ async def async_main():
         config = get_config()
     
     # 创建服务
-    service = RSSReaderService(config)
+    service = RSSReaderService(config, analysis_mode=args.mode)
     
     # 处理信号
     loop = asyncio.get_event_loop()
@@ -274,12 +359,16 @@ async def async_main():
     
     elif args.once:
         # 运行一次
+        mode_names = {"quick": "快速", "standard": "标准", "deep": "深度"}
+        print(f"🔍 使用 {mode_names[args.mode]} 分析模式...")
         await service.run_once(dry_run=args.dry_run)
         print("✅ 运行完成！")
     
     else:
         # 持续运行
-        print("🚀 RSS AI Reader 服务已启动")
+        mode_names = {"quick": "快速", "standard": "标准", "deep": "深度"}
+        print("🚀 RSS AI Reader 服务已启动（多智能体版本）")
+        print(f"🧠 分析模式: {mode_names[args.mode]}")
         print(f"📥 抓取间隔: {config.schedule.fetch_interval}")
         digest_times_str = "、".join(config.schedule.digest_times)
         print(f"📧 简报时间: 每天 {digest_times_str}")
