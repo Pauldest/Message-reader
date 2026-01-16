@@ -6,6 +6,11 @@ import signal
 import sys
 from datetime import datetime
 from pathlib import Path
+
+# 确保可以找到 src 包（支持直接运行此文件）
+if __name__ == "__main__":
+    sys.path.insert(0, str(Path(__file__).parent.parent))
+
 import structlog
 
 # 配置日志
@@ -17,15 +22,29 @@ structlog.configure(
     ]
 )
 
-from .config import get_config, reload_config, AppConfig
-from .fetcher import RSSParser, ContentExtractor
-from .agents import AnalysisOrchestrator
-from .models.agent import AnalysisMode
-from .models.article import Article as NewArticle, EnrichedArticle
-from .storage import Database, DigestArticle, DailyDigest
-from .storage.models import Article as LegacyArticle, AnalyzedArticle
-from .notifier import EmailSender
-from .scheduler import Scheduler
+# 使用条件导入支持两种运行方式
+try:
+    # 作为模块运行: python -m src.main
+    from .config import get_config, reload_config, AppConfig
+    from .fetcher import RSSParser, ContentExtractor
+    from .agents import AnalysisOrchestrator
+    from .models.agent import AnalysisMode
+    from .models.article import Article as NewArticle, EnrichedArticle
+    from .storage import Database, DigestArticle, DailyDigest
+    from .storage.models import Article as LegacyArticle, AnalyzedArticle
+    from .notifier import EmailSender
+    from .scheduler import Scheduler
+except ImportError:
+    # 直接运行: python src/main.py
+    from src.config import get_config, reload_config, AppConfig
+    from src.fetcher import RSSParser, ContentExtractor
+    from src.agents import AnalysisOrchestrator
+    from src.models.agent import AnalysisMode
+    from src.models.article import Article as NewArticle, EnrichedArticle
+    from src.storage import Database, DigestArticle, DailyDigest
+    from src.storage.models import Article as LegacyArticle, AnalyzedArticle
+    from src.notifier import EmailSender
+    from src.scheduler import Scheduler
 
 logger = structlog.get_logger()
 
@@ -115,59 +134,100 @@ class RSSReaderService:
             traceback.print_exc()
     
     async def send_daily_digest(self):
-        """发送每日简报"""
+        """发送每日简报（使用 AI 智能筛选）"""
         logger.info("preparing_daily_digest")
         
         try:
             # 获取未发送的文章
-            articles = self.db.get_unsent_articles(
+            db_articles = self.db.get_unsent_articles(
                 limit=self.config.filter.max_articles_per_digest
             )
             
-            if not articles:
+            if not db_articles:
                 logger.info("no_articles_to_send")
                 return
             
+            logger.info("articles_for_curation", count=len(db_articles))
+            
+            # 转换为 EnrichedArticle 格式供 Curator 使用
+            enriched_articles = []
+            for a in db_articles:
+                enriched = EnrichedArticle(
+                    url=a.url,
+                    title=a.title,
+                    content=a.content or "",
+                    summary=a.summary or "",
+                    source=a.source,
+                    category=a.category,
+                    overall_score=a.score or 5.0,
+                    ai_summary=a.ai_summary or "",
+                    is_top_pick=a.is_top_pick,
+                    tags=a.tags or [],
+                )
+                enriched_articles.append(enriched)
+            
+            # 🆕 使用 Curator AI 智能筛选
+            from src.agents import CuratorAgent
+            from src.services.llm import LLMService
+            
+            curator = CuratorAgent(LLMService(self.config.ai))
+            curation_result = await curator.curate(
+                enriched_articles,
+                max_articles=self.config.filter.max_articles_per_digest,
+            )
+            
             # 构建简报
             top_picks = []
-            other_articles = []
-            
-            for article in articles:
-                digest_article = DigestArticle(
+            for article in curation_result["top_picks"]:
+                top_picks.append(DigestArticle(
                     title=article.title,
                     url=article.url,
                     source=article.source,
                     category=article.category,
-                    score=article.score,
+                    score=article.overall_score,
                     summary=article.ai_summary or article.summary,
-                    reasoning=article.reasoning,
-                    is_top_pick=article.is_top_pick,
+                    reasoning="",
+                    is_top_pick=True,
                     tags=article.tags,
-                )
-                
-                if article.is_top_pick:
-                    top_picks.append(digest_article)
-                elif article.score >= self.config.filter.min_score:
-                    other_articles.append(digest_article)
+                ))
             
-            # 限制精选数量
-            top_picks = top_picks[:self.config.filter.top_pick_count]
+            other_articles = []
+            for article in curation_result["quick_reads"]:
+                other_articles.append(DigestArticle(
+                    title=article.title,
+                    url=article.url,
+                    source=article.source,
+                    category=article.category,
+                    score=article.overall_score,
+                    summary=article.ai_summary or article.summary,
+                    reasoning="",
+                    is_top_pick=False,
+                    tags=article.tags,
+                ))
             
             digest = DailyDigest(
                 date=datetime.now(),
                 top_picks=top_picks,
                 other_articles=other_articles,
-                total_fetched=len(articles),
-                total_analyzed=len(articles),
+                total_fetched=len(db_articles),
+                total_analyzed=len(db_articles),
                 total_filtered=len(top_picks) + len(other_articles),
+            )
+            
+            logger.info(
+                "curation_complete",
+                top_picks=len(top_picks),
+                quick_reads=len(other_articles),
+                excluded=len(curation_result.get("excluded", [])),
+                daily_summary=curation_result.get("daily_summary", "")[:100],
             )
             
             # 发送邮件
             success = await self.email_sender.send_digest(digest)
             
             if success:
-                # 标记文章已发送
-                sent_urls = [a.url for a in articles]
+                # 只标记被选中的文章为已发送
+                sent_urls = [a.url for a in top_picks + other_articles]
                 self.db.mark_articles_sent(sent_urls)
                 logger.info("digest_sent_successfully",
                            top_picks=len(top_picks),
@@ -177,6 +237,8 @@ class RSSReaderService:
         
         except Exception as e:
             logger.error("digest_preparation_failed", error=str(e))
+            import traceback
+            traceback.print_exc()
     
     async def run_once(self, dry_run: bool = False):
         """运行一次（用于测试）"""

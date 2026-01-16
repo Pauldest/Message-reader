@@ -5,7 +5,9 @@ from .orchestrator import AnalysisOrchestrator
 from .collector import CollectorAgent
 from .librarian import LibrarianAgent
 from .editor import EditorAgent
+from .curator import CuratorAgent
 from .analysts import SkepticAnalyst, EconomistAnalyst, DetectiveAnalyst
+from .trace_manager import TraceManager
 
 __all__ = [
     "BaseAgent",
@@ -13,7 +15,9 @@ __all__ = [
     "CollectorAgent",
     "LibrarianAgent",
     "EditorAgent",
+    "CuratorAgent",
     "SkepticAnalyst",
     "EconomistAnalyst",
     "DetectiveAnalyst",
+    "TraceManager",
 ]

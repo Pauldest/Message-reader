@@ -15,6 +15,7 @@ from .collector import CollectorAgent
 from .librarian import LibrarianAgent
 from .editor import EditorAgent
 from .analysts import SkepticAnalyst, EconomistAnalyst, DetectiveAnalyst
+from .trace_manager import TraceManager
 
 logger = structlog.get_logger()
 
@@ -32,13 +33,18 @@ class AnalysisOrchestrator:
     - DEEP: 完整流程 (所有 Agent)
     """
     
-    def __init__(self, config: AppConfig):
+    def __init__(self, config: AppConfig, enable_trace: bool = True):
         self.config = config
         self.llm_service = LLMService(config.ai)
+        self.enable_trace = enable_trace
         
         # 初始化向量存储
         vector_store_path = str(config.storage.database_path).replace(".db", "_vectors")
         self.vector_store = VectorStore(vector_store_path)
+        
+        # 初始化追踪管理器
+        trace_dir = str(config.storage.database_path).replace(".db", "_traces")
+        self.trace_manager = TraceManager(trace_dir) if enable_trace else None
         
         # 初始化所有 Agent
         self.collector = CollectorAgent(self.llm_service)
@@ -73,6 +79,10 @@ class AnalysisOrchestrator:
             mode=mode.value,
         )
         
+        # 开始追踪会话
+        if self.trace_manager:
+            self.trace_manager.start_session(article.url, article.title)
+        
         context = AgentContext(
             original_article=article,
             analysis_mode=mode,
@@ -97,6 +107,12 @@ class AnalysisOrchestrator:
                 total_tokens=context.get_total_tokens(),
             )
             
+            # 保存最终结果
+            if self.trace_manager:
+                self.trace_manager.save_final_result(enriched)
+                session_path = self.trace_manager.end_session()
+                logger.info("trace_saved", path=str(session_path))
+            
             return enriched
             
         except Exception as e:
@@ -105,6 +121,8 @@ class AnalysisOrchestrator:
                 title=article.title[:50],
                 error=str(e),
             )
+            if self.trace_manager:
+                self.trace_manager.end_session()
             # 返回基础的 EnrichedArticle
             return EnrichedArticle.from_article(article)
     
@@ -175,6 +193,7 @@ class AnalysisOrchestrator:
         # Step 1: Collector
         collector_result = await self.collector.safe_process(article, context)
         context.add_trace(collector_result.trace)
+        self._save_trace("Collector", article, collector_result)
         
         # 直接构建结果
         extracted = context.extracted_5w1h or {}
@@ -211,10 +230,12 @@ class AnalysisOrchestrator:
         # Step 1: Collector
         collector_result = await self.collector.safe_process(article, context)
         context.add_trace(collector_result.trace)
+        self._save_trace("Collector", article, collector_result)
         
         # Step 2: Librarian
         librarian_result = await self.librarian.safe_process(article, context)
         context.add_trace(librarian_result.trace)
+        self._save_trace("Librarian", article, librarian_result)
         
         # Step 3: 简化的 Editor（没有分析师报告）
         editor_result = await self.editor.process(
@@ -223,6 +244,7 @@ class AnalysisOrchestrator:
             analyst_reports={},
         )
         context.add_trace(editor_result.trace)
+        self._save_trace("Editor", article, editor_result)
         
         enriched = editor_result.data
         enriched.analysis_mode = AnalysisMode.STANDARD.value
@@ -239,10 +261,12 @@ class AnalysisOrchestrator:
         # Step 1: Collector
         collector_result = await self.collector.safe_process(article, context)
         context.add_trace(collector_result.trace)
+        self._save_trace("Collector", article, collector_result)
         
         # Step 2: Librarian
         librarian_result = await self.librarian.safe_process(article, context)
         context.add_trace(librarian_result.trace)
+        self._save_trace("Librarian", article, librarian_result)
         
         # Step 3: Analyst Team (并行执行)
         analyst_tasks = {
@@ -256,6 +280,7 @@ class AnalysisOrchestrator:
             analyst_results[name] = result.data
             context.add_trace(result.trace)
             context.analyst_reports[name] = result.data
+            self._save_trace(f"Analyst_{name}", article, result)
         
         # Step 4: Editor
         editor_result = await self.editor.process(
@@ -264,6 +289,7 @@ class AnalysisOrchestrator:
             analyst_reports=analyst_results,
         )
         context.add_trace(editor_result.trace)
+        self._save_trace("Editor", article, editor_result)
         
         enriched = editor_result.data
         enriched.analysis_mode = AnalysisMode.DEEP.value
@@ -271,13 +297,31 @@ class AnalysisOrchestrator:
         
         return enriched
     
+    def _save_trace(self, agent_name: str, article: Article, result: AgentOutput):
+        """保存 Agent 追踪数据"""
+        if not self.trace_manager:
+            return
+        
+        trace = result.trace
+        if trace:
+            self.trace_manager.save_agent_output(
+                agent_name=agent_name,
+                input_data={"title": article.title, "url": article.url},
+                output_data=result.data,
+                duration_seconds=trace.duration_seconds,
+                token_usage=trace.token_usage,
+                error=trace.error,
+            )
+    
     def get_stats(self) -> dict:
         """获取协调器统计信息"""
         return {
             "vector_store": self.vector_store.get_stats() if self.vector_store else {},
+            "trace_enabled": self.trace_manager is not None,
             "agents": [
                 self.collector.name,
                 self.librarian.name,
                 self.editor.name,
             ] + list(self.analysts.keys()),
         }
+
