@@ -140,6 +140,9 @@ class RSSReaderService:
             logger.info("starting_info_centric_processing")
             info_processing_count = 0
             for article in new_format_articles:
+                # Mark as seen by saving to DB (even if not fully analyzed in legacy way)
+                self.db.save_article(article)
+                
                 units = await self.orchestrator.process_article_information_centric(article)
                 info_processing_count += len(units)
             
@@ -160,16 +163,29 @@ class RSSReaderService:
         logger.info("preparing_daily_digest")
         
         try:
-            # 获取未发送的文章
-            db_articles = self.db.get_unsent_articles(
-                limit=self.config.filter.max_articles_per_digest
-            )
+            # Check for unsent information units FIRST (New Architecture)
+            # 🆕 使用 Curator AI 智能筛选
+            # 优先尝试基于 Information Units 的简报
+            from src.agents import CuratorAgent, InformationCuratorAgent
+            from src.services.llm import LLMService
+
+            unsent_units = self.info_store.get_unsent_units(limit=50)
             
-            if not db_articles:
-                logger.info("no_articles_to_send")
-                return
-            
-            logger.info("articles_for_curation", count=len(db_articles))
+            if len(unsent_units) >= 1: # Even 1 is enough for a digest if manual limit/once
+                 # Use Information Centric Curation logic directly
+                 pass # Logic continues below
+            else:
+                 # Check Legacy DB
+                # 获取未发送的文章
+                db_articles = self.db.get_unsent_articles(
+                    limit=self.config.filter.max_articles_per_digest
+                )
+                
+                if not db_articles:
+                    logger.info("no_articles_to_send")
+                    return
+                
+                logger.info("articles_for_curation", count=len(db_articles))
             
             # 转换为 EnrichedArticle 格式供 Curator 使用
             enriched_articles = []
@@ -188,15 +204,10 @@ class RSSReaderService:
                 )
                 enriched_articles.append(enriched)
             
-            # 🆕 使用 Curator AI 智能筛选
-            # 优先尝试基于 Information Units 的简报
-            from src.agents import CuratorAgent, InformationCuratorAgent
-            from src.services.llm import LLMService
-            
             # Check for unsent information units
-            unsent_units = self.info_store.get_unsent_units(limit=50)
+            # unsent_units variable is already set above
             
-            if len(unsent_units) >= 5:
+            if len(unsent_units) >= 1: # Lowered threshold from 5 to 1 for flexibility
                 # Use Information Centric Curation
                 logger.info("generating_info_centric_digest", units=len(unsent_units))
                 info_curator = InformationCuratorAgent(LLMService(self.config.ai))
