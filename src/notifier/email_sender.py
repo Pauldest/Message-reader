@@ -41,8 +41,8 @@ class EmailSender:
             
             # 构建邮件
             msg = MIMEMultipart("alternative")
-            msg["Subject"] = f"📬 AI 阅读简报 - {digest.date.strftime('%Y年%m月%d日')}"
-            msg["From"] = f"{self.config.from_name} <{self.config.from_addr}>"
+            msg["Subject"] = f"AI 阅读简报 - {digest.date.strftime('%Y-%m-%d')}"
+            msg["From"] = self.config.from_addr
             msg["To"] = ", ".join(self.config.to_addrs)
             
             # 添加 HTML 内容
