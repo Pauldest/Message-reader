@@ -187,22 +187,22 @@ class RSSReaderService:
                 
                 logger.info("articles_for_curation", count=len(db_articles))
             
-            # 转换为 EnrichedArticle 格式供 Curator 使用
-            enriched_articles = []
-            for a in db_articles:
-                enriched = EnrichedArticle(
-                    url=a.url,
-                    title=a.title,
-                    content=a.content or "",
-                    summary=a.summary or "",
-                    source=a.source,
-                    category=a.category,
-                    overall_score=a.score or 5.0,
-                    ai_summary=a.ai_summary or "",
-                    is_top_pick=a.is_top_pick,
-                    tags=a.tags or [],
-                )
-                enriched_articles.append(enriched)
+                # 转换为 EnrichedArticle 格式供 Curator 使用
+                enriched_articles = []
+                for a in db_articles:
+                    enriched = EnrichedArticle(
+                        url=a.url,
+                        title=a.title,
+                        content=a.content or "",
+                        summary=a.summary or "",
+                        source=a.source,
+                        category=a.category,
+                        overall_score=a.score or 5.0,
+                        ai_summary=a.ai_summary or "",
+                        is_top_pick=a.is_top_pick,
+                        tags=a.tags or [],
+                    )
+                    enriched_articles.append(enriched)
             
             # Check for unsent information units
             # unsent_units variable is already set above
