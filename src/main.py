@@ -71,13 +71,18 @@ class RSSReaderService:
             # 3. 提取正文
             articles_with_content = await self.content_extractor.extract_all(new_articles)
             
-            # 4. AI 分析
+            # 4. 获取最近已发送的文章（用于跨日去重）
+            recent_history = self.db.get_recent_sent_articles(days=3, limit=50)
+            logger.info("recent_history_loaded", count=len(recent_history))
+            
+            # 5. AI 分析（会使用历史避免重复话题）
             analyzed = await self.analyzer.analyze_batch(
                 articles_with_content,
                 top_pick_count=self.config.filter.top_pick_count,
+                recent_history=recent_history,
             )
             
-            # 5. 保存到数据库
+            # 6. 保存到数据库
             for article in analyzed:
                 self.db.save_analyzed_article(article)
             

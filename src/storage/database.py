@@ -152,6 +152,33 @@ class Database:
                 )
             conn.commit()
     
+    def get_recent_sent_articles(self, days: int = 3, limit: int = 50) -> list[dict]:
+        """获取最近几天已发送的文章摘要（用于跨日去重）"""
+        cutoff_date = datetime.now() - timedelta(days=days)
+        with self._get_conn() as conn:
+            cursor = conn.execute("""
+                SELECT title, ai_summary, tags, sent_at FROM articles 
+                WHERE sent_at IS NOT NULL AND sent_at > ?
+                ORDER BY sent_at DESC
+                LIMIT ?
+            """, (cutoff_date, limit))
+            
+            rows = cursor.fetchall()
+            result = []
+            for row in rows:
+                tags = []
+                if row["tags"]:
+                    try:
+                        tags = json.loads(row["tags"])
+                    except json.JSONDecodeError:
+                        pass
+                result.append({
+                    "title": row["title"],
+                    "summary": row["ai_summary"] or "",
+                    "tags": tags,
+                })
+            return result
+    
     def cleanup_old_articles(self, retention_days: int = 30):
         """清理旧文章"""
         cutoff_date = datetime.now() - timedelta(days=retention_days)

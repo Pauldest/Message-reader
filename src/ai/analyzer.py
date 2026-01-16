@@ -30,14 +30,15 @@ class ArticleAnalyzer:
         self, 
         articles: list[Article],
         top_pick_count: int = 5,
-        batch_size: int = 20
+        batch_size: int = 20,
+        recent_history: list[dict] = None
     ) -> list[AnalyzedArticle]:
         """
         批量分析文章
         
         1. 分批评分和摘要
         2. 合并同类文章
-        3. 选出 TOP 精选文章
+        3. 选出 TOP 精选文章（避免与历史重复）
         """
         if not articles:
             return []
@@ -70,11 +71,12 @@ class ArticleAnalyzer:
                    before=len(qualified_articles), 
                    after=len(merged_articles))
         
-        # 第三步：从合并后的文章中选出 TOP 精选
+        # 第三步：从合并后的文章中选出 TOP 精选（避免与历史重复）
         if len(merged_articles) > top_pick_count:
             top_indices = await self._select_top_picks(
                 merged_articles, 
-                top_pick_count
+                top_pick_count,
+                recent_history=recent_history or []
             )
             for idx in top_indices:
                 if 0 <= idx < len(merged_articles):
@@ -230,9 +232,10 @@ class ArticleAnalyzer:
     async def _select_top_picks(
         self, 
         articles: list[AnalyzedArticle],
-        count: int
+        count: int,
+        recent_history: list[dict] = None
     ) -> list[int]:
-        """选出最值得阅读的文章"""
+        """选出最值得阅读的文章（避免与历史重复）"""
         # 只考虑评分 >= 5 的文章
         candidates = [a for a in articles if a.score >= 5]
         if len(candidates) <= count:
@@ -241,9 +244,21 @@ class ArticleAnalyzer:
         # 构建候选文章文本
         articles_text = self._format_analyzed_for_selection(candidates[:30])  # 最多30篇候选
         
+        # 构建历史文章文本（用于跨日去重）
+        history_section = ""
+        if recent_history:
+            history_lines = ["【最近已发送的文章（请避免选择相同或相似话题）】"]
+            for item in recent_history[:20]:  # 最多20篇历史
+                tags_str = " > ".join(item.get("tags", [])) if item.get("tags") else ""
+                history_lines.append(f"- {item['title']}")
+                if tags_str:
+                    history_lines.append(f"  标签: {tags_str}")
+            history_section = "\n".join(history_lines)
+        
         prompt = TOP_SELECTION_PROMPT.format(
             count=count,
-            articles_text=articles_text
+            articles_text=articles_text,
+            history_section=history_section
         )
         
         try:
