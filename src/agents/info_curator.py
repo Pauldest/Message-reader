@@ -32,6 +32,7 @@ INFO_CURATOR_SYSTEM_PROMPT = """你是一位洞察力极强的简报主编。你
        "id": "original_unit_id",
        "display_title": "重写后的吸引人标题",
        "reasoning": "入选理由",
+       "score": 9.5,
        "presentation": {
            "summary": "简明扼要的事实摘要",
            "analysis": "深度分析内容（这是重点！请确保篇幅占比超过50%，整合 key_insights 和 analysis_content）",
@@ -80,13 +81,18 @@ class InformationCuratorAgent(BaseAgent):
             
         self.log_start(f"Curating from {len(units)} units")
         
-        # 预筛选：按重要性和深度排序，避免 Token 过长
+        # 1. 预排序：按重要性和深度
         sorted_units = sorted(
             units, 
             key=lambda u: (u.analysis_depth_score * 0.7 + u.importance_score * 0.3), 
             reverse=True
         )
-        candidates = sorted_units[:20]  # 只把最优秀的 20 个给 LLM 挑选
+        
+        # 2. 本地去重 (Deduplication)
+        unique_units = self._deduplicate_units(sorted_units)
+        logger.info("deduplication_complete", original=len(units), unique=len(unique_units))
+        
+        candidates = unique_units[:20]  # 只把最优秀的 20 个给 LLM 挑选
         
         units_json = []
         for u in candidates:
@@ -101,8 +107,9 @@ class InformationCuratorAgent(BaseAgent):
             })
             
         user_prompt = f"""
-        从以下候选列表中选出 {max_top_picks} 个精选内容：
+        从以下候选列表中选出 {max_top_picks} 个精选内容作为 Top Picks，其余适合的内容作为 Quick Reads。
         
+        候选列表：
         {json.dumps(units_json, ensure_ascii=False, indent=2)}
         """
         
@@ -116,27 +123,44 @@ class InformationCuratorAgent(BaseAgent):
         if not result or not isinstance(result, dict):
             # Fallback
             logger.warning("curation_failed_using_fallback")
-            return self._fallback_curation(candidates, max_top_picks)
+            return self._fallback_curation(unique_units, max_top_picks)
             
         self.log_complete(0, f"Selected {len(result.get('top_picks', []))} top picks")
         return result
 
+    def _deduplicate_units(self, units: List[InformationUnit], threshold: float = 0.6) -> List[InformationUnit]:
+        """基于标题相似度的简单去重 (保留分数高的)"""
+        from difflib import SequenceMatcher
+        
+        unique = []
+        for unit in units:
+            is_dup = False
+            for existing in unique:
+                similarity = SequenceMatcher(None, unit.title, existing.title).ratio()
+                if similarity > threshold:
+                    is_dup = True
+                    break
+            if not is_dup:
+                unique.append(unit)
+        return unique
+
     def _fallback_curation(self, units: List[InformationUnit], max_picks: int) -> Dict[str, Any]:
-        """降级策略：直接取前 N 个"""
+        """降级策略：直接取前 N 个 (此时 units 已经去重且排序)"""
         top = units[:max_picks]
         rest = units[max_picks:max_picks+10]
         
         return {
-            "daily_summary": "今日自动生成的简报（AI分析失败，使用默认排序）",
+            "daily_summary": "今日自动生成的简报（AI分析临时不可用，使用评分排序）",
             "top_picks": [
                 {
                     "id": u.id,
+                    "score": round(u.analysis_depth_score * 10, 1),
                     "display_title": u.title,
-                    "reasoning": "Score driven selection",
+                    "reasoning": f"Score: {u.analysis_depth_score:.1f}",
                     "presentation": {
                         "summary": u.summary,
-                        "analysis": u.analysis_content,
-                        "impact": u.impact_assessment
+                        "analysis": u.analysis_content or "暂无深度分析",
+                        "impact": u.impact_assessment or "暂无影响评估"
                     }
                 } for u in top
             ],
@@ -147,5 +171,5 @@ class InformationCuratorAgent(BaseAgent):
                     "one_line_summary": u.summary
                 } for u in rest
             ],
-            "excluded_count": len(units) - len(top) - len(rest)
+            "excluded_count": max(0, len(units) - len(top) - len(rest))
         }

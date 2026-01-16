@@ -123,17 +123,18 @@ class RSSReaderService:
                 self._convert_to_new_article(a) for a in articles_with_content
             ]
             
-            # 5. 🆕 多智能体分析
-            enriched_articles = await self.orchestrator.analyze_batch(
-                new_format_articles,
-                mode=self.analysis_mode,
-                max_concurrent=3,
-            )
+            # 5. 🆕 多智能体分析 (Legacy Flow - DISABLED)
+            # enriched_articles = await self.orchestrator.analyze_batch(
+            #     new_format_articles,
+            #     mode=self.analysis_mode,
+            #     max_concurrent=3,
+            # )
+            enriched_articles = []
             
-            # 6. 保存到数据库
-            for article in enriched_articles:
-                legacy_article = self._convert_to_legacy_article(article)
-                self.db.save_analyzed_article(legacy_article)
+            # 6. 保存到数据库 (Legacy Flow - DISABLED)
+            # for article in enriched_articles:
+            #     legacy_article = self._convert_to_legacy_article(article)
+            #     self.db.save_analyzed_article(legacy_article)
             
             # 7. 🆕 信息为中心的处理流程 (Beta)
             logger.info("starting_info_centric_processing")
@@ -220,7 +221,7 @@ class RSSReaderService:
                         url=self._get_unit_url(item.get("id"), unsent_units), # Helper needed
                         source=" | ".join(self._get_unit_sources(item.get("id"), unsent_units)),
                         category="深度精选",
-                        score=(item.get("reasoning", {}).get("score", 9.0) if isinstance(item.get("reasoning"), dict) else 9.0),
+                        score=item.get("score", (item.get("reasoning", {}).get("score", 9.0) if isinstance(item.get("reasoning"), dict) else 9.0)),
                         summary=summary_html,
                         reasoning=item.get("reasoning", "") if isinstance(item.get("reasoning"), str) else "",
                         is_top_pick=True,
