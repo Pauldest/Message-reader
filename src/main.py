@@ -78,9 +78,13 @@ class RSSReaderService:
             vector_store=self.orchestrator.get_stats().get("vector_store", {}),
         )
     
-    async def fetch_and_analyze(self):
-        """抓取并分析文章"""
-        logger.info("starting_fetch_cycle", mode=self.analysis_mode.value)
+    async def fetch_and_analyze(self, limit: int = None):
+        """抓取并分析文章
+        
+        Args:
+            limit: 限制分析的文章数量（用于测试）
+        """
+        logger.info("starting_fetch_cycle", mode=self.analysis_mode.value, limit=limit)
         
         try:
             # 1. 抓取 RSS
@@ -102,10 +106,15 @@ class RSSReaderService:
             
             logger.info("new_articles_found", count=len(new_articles))
             
-            # 3. 提取正文
+            # 3. 应用数量限制（用于测试）
+            if limit and limit > 0:
+                new_articles = new_articles[:limit]
+                logger.info("articles_limited", limit=limit, count=len(new_articles))
+            
+            # 4. 提取正文
             articles_with_content = await self.content_extractor.extract_all(new_articles)
             
-            # 4. 转换为新的 Article 模型
+            # 5. 转换为新的 Article 模型
             new_format_articles = [
                 self._convert_to_new_article(a) for a in articles_with_content
             ]
@@ -240,9 +249,14 @@ class RSSReaderService:
             import traceback
             traceback.print_exc()
     
-    async def run_once(self, dry_run: bool = False):
-        """运行一次（用于测试）"""
-        await self.fetch_and_analyze()
+    async def run_once(self, dry_run: bool = False, limit: int = None):
+        """运行一次（用于测试）
+        
+        Args:
+            dry_run: 是否不发送邮件
+            limit: 限制分析的文章数量
+        """
+        await self.fetch_and_analyze(limit=limit)
         
         if not dry_run:
             await self.send_daily_digest()
@@ -343,7 +357,9 @@ def parse_args():
   python -m src.main                         # 启动服务（深度分析模式）
   python -m src.main --mode quick            # 快速分析模式
   python -m src.main --mode standard         # 标准分析模式
-  python -m src.main --once                  # 运行一次
+  python -m src.main --once                  # 运行一次（分析所有新文章）
+  python -m src.main --once --limit 1        # 只分析 1 篇（快速测试）
+  python -m src.main --once --limit 5        # 只分析前 5 篇
   python -m src.main --once --dry-run        # 测试运行（不发送邮件）
   python -m src.main --test-email            # 发送测试邮件
         """
@@ -380,6 +396,13 @@ def parse_args():
         type=str,
         default=None,
         help="配置文件目录"
+    )
+    
+    parser.add_argument(
+        "--limit", "-l",
+        type=int,
+        default=None,
+        help="限制分析的文章数量（用于测试）"
     )
     
     return parser.parse_args()
@@ -423,7 +446,9 @@ async def async_main():
         # 运行一次
         mode_names = {"quick": "快速", "standard": "标准", "deep": "深度"}
         print(f"🔍 使用 {mode_names[args.mode]} 分析模式...")
-        await service.run_once(dry_run=args.dry_run)
+        if args.limit:
+            print(f"📊 限制分析数量: {args.limit} 篇")
+        await service.run_once(dry_run=args.dry_run, limit=args.limit)
         print("✅ 运行完成！")
     
     else:
