@@ -1,0 +1,46 @@
+# AI 配置
+ai:
+  provider: deepseek
+  api_key: ${DEEPSEEK_API_KEY}
+  model: deepseek-chat
+  base_url: https://api.deepseek.com/v1
+  max_tokens: 4096
+  temperature: 0.3
+
+# 邮件配置
+email:
+  smtp_host: smtp.qq.com
+  smtp_port: 465
+  use_ssl: true
+  username: ${EMAIL_USERNAME}
+  password: ${EMAIL_PASSWORD}
+  from_addr: ${EMAIL_FROM_ADDR}
+  from_name: AI 阅读助手
+  to_addrs:
+    - your-email@example.com
+
+# 调度配置
+schedule:
+  fetch_interval: 2h
+  digest_times:          # 支持多个发送时间
+    - "09:00"            # 早报
+    - "21:00"            # 晚报
+  timezone: Asia/Shanghai
+
+# 筛选配置
+filter:
+  top_pick_count: 5
+  min_score: 5
+  max_articles_per_digest: 100
+
+# 日志配置
+logging:
+  level: INFO
+  file: logs/app.log
+  max_size: 10MB
+  backup_count: 5
+
+# 存储配置
+storage:
+  database_path: data/articles.db
+  article_retention_days: 30

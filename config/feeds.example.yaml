@@ -1,0 +1,47 @@
+# RSS 订阅源列表
+# 添加你想要订阅的 RSS 源
+
+feeds:
+  # 科技资讯
+  - name: 少数派
+    url: https://sspai.com/feed
+    category: 科技
+    enabled: true
+
+  - name: 36氪
+    url: https://36kr.com/feed
+    category: 商业
+    enabled: true
+
+  - name: 虎嗅
+    url: https://www.huxiu.com/rss/0.xml
+    category: 商业
+    enabled: true
+
+  # 技术博客
+  - name: 阮一峰的技术博客
+    url: https://www.ruanyifeng.com/blog/atom.xml
+    category: 技术
+    enabled: true
+
+  - name: V2EX
+    url: https://www.v2ex.com/index.xml
+    category: 技术
+    enabled: true
+
+  # 国际科技
+  - name: Hacker News
+    url: https://hnrss.org/frontpage
+    category: 技术
+    enabled: true
+
+  - name: TechCrunch
+    url: https://techcrunch.com/feed/
+    category: 科技
+    enabled: true
+
+  # 添加更多订阅源...
+  # - name: 订阅源名称
+  #   url: https://example.com/feed.xml
+  #   category: 分类
+  #   enabled: true

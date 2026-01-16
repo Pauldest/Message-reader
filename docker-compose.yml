@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  rss-reader:
+    build: .
+    container_name: rss-ai-reader
+    restart: always
+    environment:
+      # AI 配置
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+      # 邮件配置
+      - EMAIL_USERNAME=${EMAIL_USERNAME}
+      - EMAIL_PASSWORD=${EMAIL_PASSWORD}
+      - EMAIL_FROM_ADDR=${EMAIL_FROM_ADDR}
+    volumes:
+      # 持久化数据
+      - ./data:/app/data
+      # 日志
+      - ./logs:/app/logs
+      # 配置文件（可选：运行时修改）
+      - ./config:/app/config:ro
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import sys; sys.exit(0)" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
