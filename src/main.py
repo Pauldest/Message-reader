@@ -22,7 +22,6 @@ structlog.configure(
     ]
 )
 
-# 使用条件导入支持两种运行方式
 try:
     # 作为模块运行: python -m src.main
     from .config import get_config, reload_config, AppConfig
@@ -34,6 +33,7 @@ try:
     from .storage.models import Article as LegacyArticle, AnalyzedArticle
     from .notifier import EmailSender
     from .scheduler import Scheduler
+    from .services.telemetry import AITelemetry, get_telemetry
 except ImportError:
     # 直接运行: python src/main.py
     from src.config import get_config, reload_config, AppConfig

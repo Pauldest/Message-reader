@@ -254,18 +254,18 @@ class InformationExtractorAgent(BaseAgent):
             
             # HEX 状态分类
             state_change_type=state_type,
-            state_change_subtypes=item.get("state_change_subtypes", []),
+            state_change_subtypes=item.get("state_change_subtypes", []) if isinstance(item.get("state_change_subtypes"), list) else [],
             
             # 三级实体锚定
             entity_hierarchy=entity_hierarchy,
             
-            # 5W1H
-            who=item.get("who", []),
-            what=item.get("what", ""),
-            when=item.get("when", ""),
-            where=item.get("where", ""),
-            why=item.get("why", ""),
-            how=item.get("how", ""),
+            # 5W1H (处理可能是字符串或列表的情况)
+            who=item.get("who", []) if isinstance(item.get("who"), list) else [item.get("who")] if item.get("who") else [],
+            what=item.get("what", "") if isinstance(item.get("what"), str) else str(item.get("what", "")),
+            when=item.get("when", "") if isinstance(item.get("when"), str) else str(item.get("when", "")),
+            where=item.get("where", "") if isinstance(item.get("where"), str) else str(item.get("where", "")),
+            why=item.get("why", "") if isinstance(item.get("why"), str) else str(item.get("why", "")),
+            how=item.get("how", "") if isinstance(item.get("how"), str) else str(item.get("how", "")),
             
             # 来源
             primary_source=article.url,
