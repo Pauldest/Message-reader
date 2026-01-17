@@ -47,10 +47,21 @@ class InformationUnit(BaseModel):
     content: str                     # 信息内容（详细，包含事实与背景）
     summary: str = ""                # 一句话核心摘要
     
+    # === 时间信息 ===
+    event_time: Optional[str] = None       # 事件发生时间（如"2026年1月15日"）
+    report_time: Optional[datetime] = None # 报道/发布时间
+    time_sensitivity: str = "normal"       # 时效性: urgent/normal/evergreen
+    
     # === 深度分析 (增强版) ===
     analysis_content: str = ""       # 专属分析板块：包含深度解读、趋势预测、矛盾点分析
     key_insights: List[str] = Field(default_factory=list)  # 关键洞察
     analysis_depth_score: float = 0.0 # 分析深度评分 (0-1) 用于筛选
+    
+    # === 4维价值评估 (0-10) ===
+    information_gain: float = 5.0     # 信息增量：是否打破已知共识
+    actionability: float = 5.0        # 行动指导性：是否能指导具体决策
+    scarcity: float = 5.0             # 稀缺性：是否为一手信源
+    impact_magnitude: float = 5.0     # 影响范围：涉及实体的权重
     
     # === 5W1H 结构化 ===
     who: List[str] = Field(default_factory=list)
@@ -81,6 +92,17 @@ class InformationUnit(BaseModel):
     updated_at: datetime = Field(default_factory=datetime.now)
     merged_count: int = 1            # 合并了多少条相似信息
     is_sent: bool = False            # 是否已发送过
+    
+    @property
+    def value_score(self) -> float:
+        """综合价值评分 (0-10): 四维加权平均"""
+        # 权重: 信息增量 30%, 行动指导 25%, 稀缺性 20%, 影响范围 25%
+        return (
+            self.information_gain * 0.30 +
+            self.actionability * 0.25 +
+            self.scarcity * 0.20 +
+            self.impact_magnitude * 0.25
+        )
     
     @property
     def source_count(self) -> int:

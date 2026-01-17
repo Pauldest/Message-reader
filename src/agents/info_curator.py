@@ -10,48 +10,89 @@ from ..models.agent import AgentContext, AgentOutput
 
 logger = structlog.get_logger()
 
-INFO_CURATOR_SYSTEM_PROMPT = """你是一位资深新闻主编，负责为用户筛选今日最有价值的信息。你必须严格把控质量，宁缺毋滥。
+INFO_CURATOR_SYSTEM_PROMPT = """你不是一个普通的阅读助手，你是一个冷酷、理性的情报过滤器。你的任务是从海量噪音中筛选出那 1% 的"高价值情报"。
 
-## 筛选原则（严格执行）
+## 【价值定义模型】- 4 维评估体系
 
-### 🚫 必须排除的内容
-1. **论坛帖子/个人求助**：如购房咨询、技术问答、个人经历分享
-2. **教程/技术文档摘录**：如"如何禁用XX功能"、代码问题解答
-3. **过于投机的观点**：无实质新闻事件支撑的纯预测或担忧
-4. **时效性差的旧闻**：复述已知事实而无新信息
-5. **标题党/低信息量**：标题夸张但内容空洞
+### 1. 信息增量 (Information Gain) - 权重 30%
+**核心问题：这条信息是否打破了已知共识？**
+- 10分：颠覆性信息，完全出乎市场预期（如"央行意外降息50基点"）
+- 7-9分：显著偏离预期，包含反直觉的数据或结论
+- 4-6分：符合预期，是已知趋势的确认
+- 1-3分：纯粹的车轱辘话复述（如"AI正在改变世界"）
 
-### ✅ 优先入选的内容
-1. **重大事件**：影响行业/市场/社会的突发新闻
-2. **深度分析**：有独到见解的解读，analysis_depth_score > 0.7
-3. **独家/稀缺信息**：其他来源难以获取的信息
+### 2. 行动指导性 (Actionability) - 权重 25%
+**核心问题：读完后能否做出具体决策？**
+- 10分：包含明确的参数、截止日期、政策变动（如"3月1日起新规生效"）
+- 7-9分：提供具体数据支撑的趋势判断
+- 4-6分：有一定参考价值但不足以直接行动
+- 1-3分：纯情绪宣泄或无关痛痒的八卦
 
-## 评分标准（必须使用完整区间）
-- **9.5-10**：仅用于改变行业格局的重大事件（每期最多1-2条）
-- **8.5-9.4**：重要且有深度的新闻（每期3-5条）
-- **7.5-8.4**：值得关注的良好内容
-- **6.5-7.4**：普通新闻，可作为快速浏览
-- **6.5以下**：不入选
+### 3. 稀缺性 (Scarcity) - 权重 20%
+**核心问题：这是一手信源还是三手转述？**
+- 10分：原始数据源（论文原件、财报表格、官方公告）
+- 7-9分：现场采访、独家报道、有数据支撑的深度分析
+- 4-6分：对权威来源的准确引用
+- 1-3分：自媒体评论、充满"震惊"、"据说"等词汇的文章
 
-## 去重规则（严格执行）
-如果多条内容讲述**同一事件**（如"苹果与谷歌合作"），只保留**最有深度的一条**，其余排除。不要把相似内容都放入精选！
+### 4. 影响范围 (Impact Magnitude) - 权重 25%
+**核心问题：事件主体的权重有多大？**
+- 核心玩家（央行、苹果、OpenAI、微软、英伟达）：即使小动作也值 7-9 分
+- 重要玩家（大型科技公司、行业龙头）：中等动作值 5-7 分
+- 边缘玩家：除非是重大事件，否则 3-5 分
 
-## 输出要求
+---
 
-返回 JSON：
+## 【高价值定义 (8-10分)】
+✅ **意外性**：包含反直觉的数据或事件，打破原有行业共识
+✅ **具体性**：包含具体数字、明确时间表、具体代码更新或法律条款
+✅ **底层逻辑**：解释了现象背后的 Why，而不仅仅是 What
+✅ **预测力**：该信息能推导出未来 3-6 个月的高确定性趋势
+
+## 【低价值定义 (0-3分)】
+❌ **情绪化**：充满形容词（"吓尿了"、"重磅"），缺乏数据支撑
+❌ **重复**：对已知事实的车轱辘话复述
+❌ **模糊**：使用"可能"、"据说"、"有关部门"等模糊指代
+❌ **非新闻**：论坛求助、技术问答、个人经历分享
+
+---
+
+## 【评估示例】
+
+**示例 1（低价值 - 3分）：**
+> "专家表示，人工智能未来将彻底改变我们的生活，大家要做好准备。"
+
+点评：正确的废话。无具体时间、技术路径、指导意义。信息增量=2, 行动指导=1, 稀缺性=2, 影响范围=3。
+
+**示例 2（高价值 - 9分）：**
+> "台积电宣布2nm工艺良率突破80%，将于Q3量产，首批客户为苹果M5芯片。"
+
+点评：具体技术参数(2nm/80%)、明确时间(Q3)、核心玩家(台积电/苹果)。信息增量=8, 行动指导=8, 稀缺性=9, 影响范围=9。
+
+---
+
+## 【输出格式】
+
 ```json
 {
-  "daily_summary": "今日一句话导语（50字以内）",
+  "daily_summary": "今日一句话导语（30字以内）",
   "top_picks": [
     {
       "id": "unit_id",
-      "display_title": "重写后的精炼标题",
-      "score": 8.7,
-      "reasoning": "入选理由（说明价值点，20字以内）",
+      "display_title": "精炼标题",
+      "event_time": "事件发生时间",
+      "scores": {
+        "information_gain": 8.5,
+        "actionability": 7.0,
+        "scarcity": 9.0,
+        "impact_magnitude": 8.0,
+        "total": 8.1
+      },
+      "reasoning": "入选理由（说明哪个维度得分高）",
       "presentation": {
-        "summary": "事实摘要（2-3句话）",
-        "analysis": "深度分析（这是核心！100-200字，解释意义和影响）",
-        "impact": "潜在影响（1-2句话）"
+        "summary": "事实摘要（2-3句）",
+        "analysis": "深度分析（100-200字，解释 Why 和影响）",
+        "impact": "潜在影响（1-2句）"
       }
     }
   ],
@@ -59,23 +100,18 @@ INFO_CURATOR_SYSTEM_PROMPT = """你是一位资深新闻主编，负责为用户
     {
       "id": "unit_id",
       "display_title": "标题",
-      "one_line_summary": "一句话概括（20字以内）"
+      "one_line_summary": "一句话（20字以内）",
+      "total_score": 6.5
     }
-  ],
-  "excluded_reasons": {
-    "duplicate": ["id1", "id2"],
-    "irrelevant": ["id3"],
-    "low_quality": ["id4"]
-  }
+  ]
 }
 ```
 
-## 数量硬性限制
-- **top_picks: 5-8 条**（质量优先，可以更少，但不能超过8条）
-- **quick_reads: 5-15 条**
-- **总计不超过 20 条**
-
-记住：你是一个严格的主编，不是一个讨好读者的推荐算法。宁可漏掉一条好内容，也不能让垃圾内容进入精选！
+## 【硬性限制】
+- **top_picks**: 5-8 条（综合分 ≥ 7.5）
+- **quick_reads**: 5-12 条（综合分 6.0-7.4）
+- 综合分 < 6.0 的内容不入选
+- 同一事件只保留最高分的一条
 """
 
 class InformationCuratorAgent(BaseAgent):
@@ -107,10 +143,10 @@ class InformationCuratorAgent(BaseAgent):
         filtered_units = self._filter_irrelevant_content(units)
         logger.info("content_filtering", original=len(units), after_filter=len(filtered_units))
         
-        # 2. 预排序：按重要性和深度
+        # 2. 预排序：使用综合价值评分
         sorted_units = sorted(
             filtered_units, 
-            key=lambda u: (u.analysis_depth_score * 0.6 + u.importance_score * 0.4), 
+            key=lambda u: u.value_score,  # 使用新的4维综合评分
             reverse=True
         )
         
@@ -123,29 +159,45 @@ class InformationCuratorAgent(BaseAgent):
         
         units_json = []
         for u in candidates:
-            # 添加来源信息帮助 AI 识别低质量内容
+            # 添加来源信息
             source_name = ""
             if u.sources:
-                source_name = u.sources[0].source_name if hasattr(u.sources[0], 'source_name') else str(u.sources[0])
+                source_name = u.sources[0].source_name if hasattr(u.sources[0], 'source_name') else ""
             
             units_json.append({
                 "id": u.id,
                 "title": u.title,
-                "source": source_name or u.primary_source,
+                "source": source_name or self._extract_domain(u.primary_source),
+                "event_time": u.event_time or u.when or "未知",
+                "report_time": u.report_time.strftime("%Y-%m-%d %H:%M") if u.report_time else "未知",
                 "summary": u.summary[:300],
                 "analysis_content": u.analysis_content[:400] if u.analysis_content else "",
                 "key_insights": u.key_insights[:3] if u.key_insights else [],
+                # 已有的4维评分
+                "current_scores": {
+                    "information_gain": round(u.information_gain, 1),
+                    "actionability": round(u.actionability, 1),
+                    "scarcity": round(u.scarcity, 1),
+                    "impact_magnitude": round(u.impact_magnitude, 1),
+                    "value_score": round(u.value_score, 1)
+                },
                 "depth_score": round(u.analysis_depth_score, 2),
                 "importance": round(u.importance_score, 2)
             })
             
-        user_prompt = f"""从以下 {len(candidates)} 个候选中严格筛选：
+        user_prompt = f"""请基于【价值定义模型】对以下 {len(candidates)} 个候选进行评估和筛选：
 
-**要求**：
-- Top Picks: 最多 {min(max_top_picks, 8)} 条（宁少勿滥）
-- Quick Reads: 最多 15 条
-- 相同事件只保留最优的一条
-- 排除论坛帖子、技术问答、个人求助类内容
+**筛选要求**：
+- Top Picks: 最多 {min(max_top_picks, 8)} 条（综合分 ≥ 7.5）
+- Quick Reads: 最多 12 条（综合分 6.0-7.4）
+- 综合分 < 6.0 不入选
+- 同一事件只保留最高分的一条
+
+**评估维度**（请为每条内容打分）：
+1. 信息增量 (1-10): 是否打破已知？
+2. 行动指导 (1-10): 能否指导决策？
+3. 稀缺性 (1-10): 是否一手信源？
+4. 影响范围 (1-10): 涉及实体权重？
 
 候选列表：
 {json.dumps(units_json, ensure_ascii=False, indent=2)}
@@ -153,8 +205,8 @@ class InformationCuratorAgent(BaseAgent):
         
         result, token_usage = await self.invoke_llm(
             user_prompt=user_prompt,
-            max_tokens=3000,
-            temperature=0.2,  # 降低温度提高一致性
+            max_tokens=4000,  # 增加 token 以容纳更详细的评分
+            temperature=0.15,  # 更低温度提高评分一致性
             json_mode=True
         )
         
@@ -162,10 +214,45 @@ class InformationCuratorAgent(BaseAgent):
             logger.warning("curation_failed_using_fallback")
             return self._fallback_curation(unique_units, max_top_picks)
         
-        # 5. 后处理：强制执行硬性限制
+        # 5. 后处理：强制执行硬性限制和分数过滤
         result = self._enforce_limits(result, max_top_picks)
+        result = self._filter_low_scores(result)
             
         self.log_complete(0, f"Selected {len(result.get('top_picks', []))} top picks, {len(result.get('quick_reads', []))} quick reads")
+        return result
+    
+    def _extract_domain(self, url: str) -> str:
+        """从 URL 提取域名"""
+        if not url:
+            return "未知来源"
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            domain = parsed.netloc.replace("www.", "")
+            return domain or "未知来源"
+        except:
+            return "未知来源"
+    
+    def _filter_low_scores(self, result: Dict[str, Any]) -> Dict[str, Any]:
+        """过滤低分内容"""
+        # 过滤 top_picks 中分数低于 7.5 的
+        top_picks = result.get("top_picks", [])
+        filtered_top = []
+        for item in top_picks:
+            score = item.get("scores", {}).get("total", 0) if isinstance(item.get("scores"), dict) else item.get("score", 0)
+            if score >= 7.0:  # 稍微放宽一点避免空结果
+                filtered_top.append(item)
+        result["top_picks"] = filtered_top
+        
+        # 过滤 quick_reads 中分数低于 6.0 的
+        quick_reads = result.get("quick_reads", [])
+        filtered_quick = []
+        for item in quick_reads:
+            score = item.get("total_score", 0)
+            if score >= 5.5:  # 稍微放宽
+                filtered_quick.append(item)
+        result["quick_reads"] = filtered_quick
+        
         return result
     
     def _filter_irrelevant_content(self, units: List[InformationUnit]) -> List[InformationUnit]:
