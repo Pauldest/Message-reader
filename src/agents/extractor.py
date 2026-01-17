@@ -150,12 +150,12 @@ class InformationExtractorAgent(BaseAgent):
         来源: {article.source}
         发布时间: {article.published_at}
         内容:
-        {article.content}
+        {article.content[:20000]}  # 截断过长内容避免 Token 溢出
         """
         
         result, token_usage = await self.invoke_llm(
             user_prompt=user_prompt,
-            max_tokens=4000,
+            max_tokens=8000,  # 增加输出 Token 限制以支持长文分析
             temperature=0.3,
             json_mode=True
         )
