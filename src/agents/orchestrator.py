@@ -330,7 +330,7 @@ class AnalysisOrchestrator:
         """
         以信息为中心的处理流程
         1. Extract: 文章 -> 信息单元列表
-        2. Merge: 与库中现有单元去重/合并
+        2. Merge: 与库中现有单元去重/合并 (使用语义相似度)
         3. Save: 持久化
         """
         if not self.info_store:
@@ -355,14 +355,13 @@ class AnalysisOrchestrator:
             final_units = []
             
             for unit in units:
-                # 2. Check & Merge
-                # 简单指纹匹配 (MVP)
-                # TODO: 向量相似度搜索
+                # 2. Check & Merge using Semantic Similarity (Primary) + Fingerprint (Fallback)
+                
+                # 2.1 首先检查精确指纹匹配
                 existing = self.info_store.get_unit_by_fingerprint(unit.fingerprint)
                 
                 if existing:
-                    logger.info("merging_existing_unit", fingerprint=unit.fingerprint)
-                    # Merge Logic
+                    logger.info("merging_exact_fingerprint_match", fingerprint=unit.fingerprint)
                     merged = await self.merger.merge([existing, unit])
                     self.info_store.save_unit(merged)
                     final_units.append(merged)
@@ -370,12 +369,48 @@ class AnalysisOrchestrator:
                     if self.trace_manager:
                         self.trace_manager.save_agent_output(
                             agent_name="Merger",
-                            input_data={"unit_new": unit.title, "unit_exist": existing.title},
+                            input_data={"unit_new": unit.title, "unit_exist": existing.title, "match_type": "fingerprint"},
                             output_data={"merged": merged.title},
                             duration_seconds=0, token_usage={}
                         )
+                    continue
+                
+                # 2.2 如果没有精确匹配，使用向量相似度搜索
+                similar_units = await self.info_store.find_similar_units(unit, threshold=0.6, top_k=3)
+                
+                if similar_units:
+                    # 找到语义相似的单元，进行合并
+                    logger.info(
+                        "merging_semantically_similar_units",
+                        new_title=unit.title,
+                        similar_count=len(similar_units),
+                        similar_titles=[u.title for u in similar_units]
+                    )
+                    
+                    # 合并所有相似单元 + 新单元
+                    all_to_merge = similar_units + [unit]
+                    merged = await self.merger.merge(all_to_merge)
+                    
+                    # 更新合并后的单元（使用第一个相似单元的 ID 作为主 ID）
+                    merged.id = similar_units[0].id
+                    merged.fingerprint = similar_units[0].fingerprint
+                    
+                    self.info_store.save_unit(merged)
+                    final_units.append(merged)
+                    
+                    if self.trace_manager:
+                        self.trace_manager.save_agent_output(
+                            agent_name="Merger",
+                            input_data={
+                                "unit_new": unit.title, 
+                                "similar_units": [u.title for u in similar_units],
+                                "match_type": "semantic"
+                            },
+                            output_data={"merged": merged.title, "source_count": merged.source_count},
+                            duration_seconds=0, token_usage={}
+                        )
                 else:
-                    # New Unit
+                    # 完全新的单元
                     self.info_store.save_unit(unit)
                     final_units.append(unit)
             

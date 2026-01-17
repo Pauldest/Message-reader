@@ -7,6 +7,7 @@ from datetime import datetime
 import structlog
 
 from .database import Database
+from .vector_store import VectorStore
 from ..models.information import InformationUnit, SourceReference, InformationType
 
 logger = structlog.get_logger()
@@ -15,8 +16,10 @@ logger = structlog.get_logger()
 class InformationStore:
     """信息单元存储管理"""
     
-    def __init__(self, db: Database):
+    def __init__(self, db: Database, vector_store: VectorStore = None):
         self.db = db
+        self.vector_store = vector_store
+
     
     def unit_exists(self, fingerprint: str) -> bool:
         """检查信息单元是否已存在（通过指纹）"""
@@ -82,6 +85,88 @@ class InformationStore:
                 self._save_source_record(conn, unit.fingerprint, source)
                 
             conn.commit()
+        
+        # 3. 同步更新向量存储（用于语义搜索）
+        if self.vector_store:
+            import asyncio
+            try:
+                # 构建搜索文本：标题 + 摘要 + 关键洞察
+                search_text = f"{unit.title} {unit.summary} {' '.join(unit.key_insights)}"
+                asyncio.get_event_loop().run_until_complete(
+                    self.vector_store.add_article(
+                        article_id=unit.id,
+                        title=unit.title,
+                        content=search_text,
+                        metadata={
+                            "fingerprint": unit.fingerprint,
+                            "type": unit.type.value,
+                            "importance": unit.importance_score
+                        }
+                    )
+                )
+            except RuntimeError:
+                # 如果没有事件循环，创建一个临时的
+                asyncio.run(
+                    self.vector_store.add_article(
+                        article_id=unit.id,
+                        title=unit.title,
+                        content=search_text,
+                        metadata={
+                            "fingerprint": unit.fingerprint,
+                            "type": unit.type.value,
+                            "importance": unit.importance_score
+                        }
+                    )
+                )
+            except Exception as e:
+                logger.warning("vector_store_update_failed", error=str(e))
+    
+    async def find_similar_units(self, unit: InformationUnit, threshold: float = 0.65, top_k: int = 3) -> List[InformationUnit]:
+        """
+        使用向量相似度搜索找到与给定单元语义相似的已存在单元
+        
+        Args:
+            unit: 待比较的信息单元
+            threshold: 相似度阈值 (0-1)，超过此值视为相似
+            top_k: 返回最相似的前 k 个结果
+            
+        Returns:
+            相似的 InformationUnit 列表
+        """
+        if not self.vector_store:
+            logger.debug("vector_store_not_available_for_similarity_search")
+            return []
+        
+        # 构建搜索查询
+        query = f"{unit.title} {unit.summary} {' '.join(unit.key_insights[:3])}"
+        
+        try:
+            results = await self.vector_store.search(query, top_k=top_k)
+            
+            similar_units = []
+            for r in results:
+                # 跳过自身
+                if r["id"] == unit.id:
+                    continue
+                    
+                # 检查相似度阈值
+                if r.get("score", 0) >= threshold:
+                    existing_unit = self.get_unit(r["id"])
+                    if existing_unit:
+                        similar_units.append(existing_unit)
+                        logger.info(
+                            "similar_unit_found",
+                            new_title=unit.title[:30],
+                            existing_title=existing_unit.title[:30],
+                            score=r["score"]
+                        )
+            
+            return similar_units
+            
+        except Exception as e:
+            logger.warning("similarity_search_failed", error=str(e))
+            return []
+
             
     def _save_unit_record(self, conn: sqlite3.Connection, unit: InformationUnit):
         """保存信息单元记录"""

@@ -45,6 +45,7 @@ except ImportError:
     from src.storage.models import Article as LegacyArticle, AnalyzedArticle
     from src.notifier import EmailSender
     from src.scheduler import Scheduler
+    from src.services.telemetry import AITelemetry, get_telemetry
 
 logger = structlog.get_logger()
 
@@ -69,6 +70,14 @@ class RSSReaderService:
         self.email_sender = EmailSender(config.email)
         self.scheduler = Scheduler(config.schedule)
         
+        # 🆕 初始化遥测服务
+        AITelemetry.initialize(
+            enabled=config.telemetry.enabled,
+            storage_path=config.telemetry.storage_path,
+            retention_days=config.telemetry.retention_days,
+            max_content_length=config.telemetry.max_content_length,
+        )
+        
         # 运行状态
         self._running = False
         
@@ -78,8 +87,8 @@ class RSSReaderService:
             vector_store=self.orchestrator.get_stats().get("vector_store", {}),
         )
         
-        # 初始化信息存储并注入协调器
-        self.info_store = InformationStore(self.db)
+        # 初始化信息存储并注入协调器（传入向量存储以启用语义去重）
+        self.info_store = InformationStore(self.db, vector_store=self.orchestrator.vector_store)
         self.orchestrator.set_information_store(self.info_store)
     
     async def fetch_and_analyze(self, limit: int = None):
@@ -516,7 +525,118 @@ def parse_args():
         help="限制分析的文章数量（用于测试）"
     )
     
+    # 添加 telemetry 子命令
+    subparsers = parser.add_subparsers(dest="command", help="子命令")
+    
+    # telemetry 命令
+    tele_parser = subparsers.add_parser("telemetry", help="AI 遥测管理")
+    tele_subparsers = tele_parser.add_subparsers(dest="tele_action", help="遥测操作")
+    
+    # telemetry stats
+    stats_parser = tele_subparsers.add_parser("stats", help="显示遥测统计")
+    stats_parser.add_argument("--days", "-d", type=int, default=7, help="统计天数")
+    
+    # telemetry list
+    list_parser = tele_subparsers.add_parser("list", help="列出最近的 AI 调用")
+    list_parser.add_argument("--limit", "-l", type=int, default=20, help="显示数量")
+    list_parser.add_argument("--session", "-s", type=str, help="按 session 过滤")
+    list_parser.add_argument("--agent", "-a", type=str, help="按 agent 过滤")
+    
+    # telemetry export
+    export_parser = tele_subparsers.add_parser("export", help="导出遥测数据")
+    export_parser.add_argument("--output", "-o", type=str, default="telemetry_export.jsonl", help="输出文件")
+    export_parser.add_argument("--days", "-d", type=int, default=7, help="导出天数")
+    
+    # telemetry cleanup
+    cleanup_parser = tele_subparsers.add_parser("cleanup", help="清理过期遥测数据")
+    
+    # telemetry sessions
+    sessions_parser = tele_subparsers.add_parser("sessions", help="列出追踪会话")
+    sessions_parser.add_argument("--limit", "-l", type=int, default=20, help="显示数量")
+    
     return parser.parse_args()
+
+
+def handle_telemetry_command(args, config):
+    """处理遥测相关命令"""
+    from datetime import datetime, timedelta
+    from src.services.telemetry import AITelemetry
+    import json
+    
+    # 初始化遥测
+    telemetry = AITelemetry.initialize(
+        enabled=config.telemetry.enabled,
+        storage_path=config.telemetry.storage_path,
+        retention_days=config.telemetry.retention_days,
+    )
+    
+    if args.tele_action == "stats":
+        # 统计信息
+        days = args.days
+        start_time = datetime.now() - timedelta(days=days)
+        stats = telemetry.get_stats(start_time=start_time)
+        
+        print(f"\n📊 AI 遥测统计 (最近 {days} 天)")
+        print("=" * 40)
+        print(f"总调用次数: {stats.total_calls}")
+        print(f"总 Token 使用: {stats.total_tokens:,}")
+        print(f"  - Prompt: {stats.total_prompt_tokens:,}")
+        print(f"  - Completion: {stats.total_completion_tokens:,}")
+        print(f"总耗时: {stats.total_duration_ms / 1000:.1f} 秒")
+        print(f"平均耗时: {stats.avg_duration_ms:.0f} 毫秒/次")
+        print(f"错误次数: {stats.error_count} ({stats.error_rate:.1f}%)")
+        
+        if stats.calls_by_type:
+            print(f"\n按类型分布:")
+            for call_type, count in stats.calls_by_type.items():
+                print(f"  {call_type}: {count}")
+        
+        if stats.calls_by_agent:
+            print(f"\n按 Agent 分布:")
+            for agent, count in sorted(stats.calls_by_agent.items(), key=lambda x: -x[1])[:10]:
+                print(f"  {agent or 'N/A'}: {count}")
+    
+    elif args.tele_action == "list":
+        # 列出调用
+        records = telemetry.query(
+            limit=args.limit,
+            session_id=getattr(args, 'session', None),
+            agent_name=getattr(args, 'agent', None),
+        )
+        
+        print(f"\n📋 最近 {len(records)} 条 AI 调用记录")
+        print("=" * 80)
+        for r in records:
+            ts = r['timestamp'][:19] if r.get('timestamp') else 'N/A'
+            agent = r.get('agent_name') or 'N/A'
+            print(f"{ts} | {r['call_type']:<10} | {agent:<20} | {r['total_tokens']:>6} tokens | {r['duration_ms']:>5}ms")
+    
+    elif args.tele_action == "export":
+        # 导出数据
+        days = args.days
+        start_time = datetime.now() - timedelta(days=days)
+        output = args.output
+        
+        count = telemetry.export(output, start_time=start_time)
+        print(f"\n✅ 已导出 {count} 条记录到 {output}")
+    
+    elif args.tele_action == "cleanup":
+        # 清理数据
+        deleted = telemetry.cleanup()
+        print(f"\n✅ 已清理 {deleted} 条过期记录")
+    
+    elif args.tele_action == "sessions":
+        # 列出 session
+        sessions = telemetry.list_sessions(limit=args.limit)
+        
+        print(f"\n📁 最近 {len(sessions)} 个追踪会话")
+        print("=" * 80)
+        for s in sessions:
+            print(f"{s['session_id']} | {s['call_count']:>3} calls | {s['total_tokens'] or 0:>6} tokens | {s['start_time'][:19]}")
+    
+    else:
+        print("请指定操作: stats, list, export, cleanup, sessions")
+        print("使用 --help 查看帮助")
 
 
 async def async_main():
@@ -528,6 +648,11 @@ async def async_main():
         config = reload_config(Path(args.config_dir))
     else:
         config = get_config()
+    
+    # 处理 telemetry 子命令
+    if args.command == "telemetry":
+        handle_telemetry_command(args, config)
+        return
     
     # 创建服务
     service = RSSReaderService(config, analysis_mode=args.mode)

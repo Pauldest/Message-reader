@@ -3,6 +3,7 @@
 import json
 import re
 import time
+import uuid
 from typing import Optional, Any
 from openai import AsyncOpenAI
 import structlog
@@ -10,6 +11,20 @@ import structlog
 from ..config import AIConfig
 
 logger = structlog.get_logger()
+
+# 延迟导入避免循环依赖
+_telemetry = None
+
+def _get_telemetry():
+    """延迟获取遥测服务"""
+    global _telemetry
+    if _telemetry is None:
+        try:
+            from .telemetry import get_telemetry
+            _telemetry = get_telemetry()
+        except:
+            _telemetry = None
+    return _telemetry
 
 
 class LLMService:
@@ -21,6 +36,7 @@ class LLMService:
     - 自动重试
     - Token 使用追踪
     - JSON 解析辅助
+    - 遥测记录
     """
     
     def __init__(self, config: AIConfig):
@@ -57,11 +73,14 @@ class LLMService:
         max_tokens = max_tokens or self.default_max_tokens
         temperature = temperature if temperature is not None else self.default_temperature
         
+        call_id = str(uuid.uuid4())
+        start_time = time.time()
+        retry_attempts = 0
         last_error = None
+        
         for attempt in range(retry_count):
+            retry_attempts = attempt
             try:
-                start_time = time.time()
-                
                 response = await self.client.chat.completions.create(
                     model=self.model,
                     messages=messages,
@@ -70,6 +89,7 @@ class LLMService:
                 )
                 
                 duration = time.time() - start_time
+                duration_ms = int(duration * 1000)
                 content = response.choices[0].message.content or ""
                 
                 token_usage = {
@@ -85,6 +105,19 @@ class LLMService:
                     tokens=token_usage,
                 )
                 
+                # 记录遥测
+                telemetry = _get_telemetry()
+                if telemetry:
+                    telemetry.record_chat(
+                        model=self.model,
+                        messages=messages,
+                        response=content,
+                        token_usage=token_usage,
+                        duration_ms=duration_ms,
+                        retry_count=retry_attempts,
+                        caller="LLMService.chat",
+                    )
+                
                 return content, token_usage
                 
             except Exception as e:
@@ -96,6 +129,21 @@ class LLMService:
                 )
                 if attempt < retry_count - 1:
                     await self._exponential_backoff(attempt)
+        
+        # 记录失败的遥测
+        duration_ms = int((time.time() - start_time) * 1000)
+        telemetry = _get_telemetry()
+        if telemetry:
+            telemetry.record_chat(
+                model=self.model,
+                messages=messages,
+                response="",
+                token_usage={"prompt": 0, "completion": 0, "total": 0},
+                duration_ms=duration_ms,
+                retry_count=retry_attempts,
+                error=str(last_error),
+                caller="LLMService.chat",
+            )
         
         raise last_error
     
@@ -112,6 +160,7 @@ class LLMService:
         Returns:
             (parsed_json, token_usage) - 如果解析失败，parsed_json 为 None
         """
+        start_time = time.time()
         content, token_usage = await self.chat(
             messages=messages,
             max_tokens=max_tokens,
@@ -121,6 +170,21 @@ class LLMService:
         )
         
         parsed = self.parse_json(content)
+        
+        # 额外记录 JSON 解析结果
+        telemetry = _get_telemetry()
+        if telemetry:
+            duration_ms = int((time.time() - start_time) * 1000)
+            telemetry.record_chat_json(
+                model=self.model,
+                messages=messages,
+                response=content,
+                parsed_json=parsed,
+                token_usage=token_usage,
+                duration_ms=duration_ms,
+                caller="LLMService.chat_json",
+            )
+        
         return parsed, token_usage
     
     @staticmethod

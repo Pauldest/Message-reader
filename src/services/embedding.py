@@ -1,5 +1,6 @@
 """嵌入向量服务"""
 
+import time
 from typing import Optional
 from openai import AsyncOpenAI
 import structlog
@@ -7,6 +8,20 @@ import structlog
 from ..config import AIConfig
 
 logger = structlog.get_logger()
+
+# 延迟导入避免循环依赖
+_telemetry = None
+
+def _get_telemetry():
+    """延迟获取遥测服务"""
+    global _telemetry
+    if _telemetry is None:
+        try:
+            from .telemetry import get_telemetry
+            _telemetry = get_telemetry()
+        except:
+            _telemetry = None
+    return _telemetry
 
 
 class EmbeddingService:
@@ -25,6 +40,7 @@ class EmbeddingService:
         # DeepSeek 目前不支持 embeddings，使用简单的 TF-IDF 替代
         # 未来可以切换到支持 embeddings 的服务
         self._use_simple_embedding = True
+        self._embedding_model = "text-embedding-3-small"
     
     async def embed_text(self, text: str) -> list[float]:
         """
@@ -36,17 +52,57 @@ class EmbeddingService:
         Returns:
             向量列表
         """
+        start_time = time.time()
+        
         if self._use_simple_embedding:
-            return self._simple_hash_embedding(text)
+            result = self._simple_hash_embedding(text)
+            # 记录遥测
+            telemetry = _get_telemetry()
+            if telemetry:
+                duration_ms = int((time.time() - start_time) * 1000)
+                telemetry.record_embedding(
+                    model="simple_hash",
+                    input_text=text,
+                    dimensions=len(result),
+                    duration_ms=duration_ms,
+                    caller="EmbeddingService.embed_text",
+                )
+            return result
         
         try:
             response = await self.client.embeddings.create(
-                model="text-embedding-3-small",
+                model=self._embedding_model,
                 input=text,
             )
-            return response.data[0].embedding
+            embedding = response.data[0].embedding
+            
+            # 记录遥测
+            telemetry = _get_telemetry()
+            if telemetry:
+                duration_ms = int((time.time() - start_time) * 1000)
+                telemetry.record_embedding(
+                    model=self._embedding_model,
+                    input_text=text,
+                    dimensions=len(embedding),
+                    duration_ms=duration_ms,
+                    caller="EmbeddingService.embed_text",
+                )
+            
+            return embedding
         except Exception as e:
             logger.warning("embedding_failed", error=str(e))
+            # 记录失败的遥测
+            telemetry = _get_telemetry()
+            if telemetry:
+                duration_ms = int((time.time() - start_time) * 1000)
+                telemetry.record_embedding(
+                    model=self._embedding_model,
+                    input_text=text,
+                    dimensions=0,
+                    duration_ms=duration_ms,
+                    error=str(e),
+                    caller="EmbeddingService.embed_text",
+                )
             return self._simple_hash_embedding(text)
     
     async def embed_batch(self, texts: list[str]) -> list[list[float]]:

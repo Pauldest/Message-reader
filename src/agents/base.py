@@ -64,6 +64,13 @@ class BaseAgent(ABC):
         Returns:
             (response, token_usage)
         """
+        # 设置当前 agent 上下文供遥测使用
+        try:
+            from ..services.telemetry import AITelemetry
+            AITelemetry.set_agent(self.name)
+        except:
+            pass
+        
         system = system_prompt or self.SYSTEM_PROMPT
         messages = self.llm.build_messages(system, user_prompt)
         

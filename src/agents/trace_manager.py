@@ -56,6 +56,13 @@ class TraceManager:
         }
         self._save_json("_metadata.json", metadata)
         
+        # 同步 session_id 到遥测系统
+        try:
+            from ..services.telemetry import AITelemetry
+            AITelemetry.set_session(self._current_session_id)
+        except:
+            pass
+        
         logger.info(
             "trace_session_started",
             session_id=self._current_session_id,

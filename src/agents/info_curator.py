@@ -128,17 +128,46 @@ class InformationCuratorAgent(BaseAgent):
         self.log_complete(0, f"Selected {len(result.get('top_picks', []))} top picks")
         return result
 
-    def _deduplicate_units(self, units: List[InformationUnit], threshold: float = 0.6) -> List[InformationUnit]:
-        """基于标题相似度的简单去重 (保留分数高的)"""
+    def _deduplicate_units(self, units: List[InformationUnit], threshold: float = 0.55) -> List[InformationUnit]:
+        """
+        增强版去重：同时检查标题相似度和内容相似度
+        
+        策略：
+        1. 如果标题相似度 > threshold，认为是重复
+        2. 如果标题相似度 > 0.4 且 摘要相似度 > threshold，也认为是重复
+        3. 保留分数更高的那个
+        """
         from difflib import SequenceMatcher
+        
+        def content_key(u: InformationUnit) -> str:
+            """生成用于相似度比较的内容字符串"""
+            return f"{u.summary} {' '.join(u.key_insights[:3])}"
+        
+        def are_similar(u1: InformationUnit, u2: InformationUnit) -> bool:
+            # 检查标题相似度
+            title_sim = SequenceMatcher(None, u1.title, u2.title).ratio()
+            if title_sim > threshold:
+                return True
+            
+            # 如果标题有一定相似度，再检查内容
+            if title_sim > 0.4:
+                content_sim = SequenceMatcher(None, content_key(u1), content_key(u2)).ratio()
+                if content_sim > threshold:
+                    return True
+            
+            return False
         
         unique = []
         for unit in units:
             is_dup = False
-            for existing in unique:
-                similarity = SequenceMatcher(None, unit.title, existing.title).ratio()
-                if similarity > threshold:
+            for i, existing in enumerate(unique):
+                if are_similar(unit, existing):
                     is_dup = True
+                    # 保留分数更高的
+                    unit_score = unit.analysis_depth_score * 0.7 + unit.importance_score * 0.3
+                    exist_score = existing.analysis_depth_score * 0.7 + existing.importance_score * 0.3
+                    if unit_score > exist_score:
+                        unique[i] = unit  # 替换为更高分的
                     break
             if not is_dup:
                 unique.append(unit)

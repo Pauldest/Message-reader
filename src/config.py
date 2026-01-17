@@ -58,6 +58,14 @@ class StorageConfig(BaseModel):
     article_retention_days: int = 30
 
 
+class TelemetryConfig(BaseModel):
+    """遥测配置"""
+    enabled: bool = True
+    storage_path: str = "data/telemetry"
+    retention_days: int = 30
+    max_content_length: int = 10000  # 单条记录最大内容长度
+
+
 class FeedSource(BaseModel):
     """RSS 订阅源"""
     name: str
@@ -74,6 +82,7 @@ class AppConfig(BaseModel):
     filter: FilterConfig = Field(default_factory=FilterConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
+    telemetry: TelemetryConfig = Field(default_factory=TelemetryConfig)
     feeds: list[FeedSource] = Field(default_factory=list)
 
 
