@@ -487,6 +487,64 @@ class RSSReaderService:
         
         await backfill_agent.run(limit=limit)
 
+    def run_query(self, query: str):
+        """查询实体信息"""
+        print(f"🔍 正在查询: {query} ...")
+        # 尝试精确匹配
+        entity = self.entity_store.get_entity_by_name(query)
+        
+        if not entity:
+            # 尝试模糊搜索
+            candidates = self.entity_store.search_entities(query)
+            if candidates:
+                print(f"❓ 未找到精确匹配。您是指: {', '.join([e.canonical_name for e in candidates])} ?")
+            else:
+                print("❌ 未找到名为 '{}' 的实体".format(query))
+            return
+            
+        print("\n" + "="*60)
+        print(f"📍 {entity.canonical_name}  [{entity.type.value}]")
+        print("-" * 60)
+        print(f"📊 提及次数: {entity.mention_count}")
+        print(f"📅 首次提及: {entity.first_mentioned}")
+        print(f"📅 最近提及: {entity.last_mentioned}")
+        
+        # 别名
+        aliases = self.entity_store.get_aliases(entity.id)
+        if aliases:
+            print(f"🏷️  别名: {', '.join(aliases)}")
+        
+        # 关系
+        relations = self.entity_store.get_relations(entity.id)
+        if relations:
+            print(f"\n🔗 关系网络 ({len(relations)}):")
+            for r in relations:
+                other_id = r.target_id if r.source_id == entity.id else r.source_id
+                other = self.entity_store.get_entity(other_id)
+                other_name = other.canonical_name if other else "Unknown"
+                
+                direction = "➡️ " if r.source_id == entity.id else "⬅️ "
+                rel_name = r.relation_type.value
+                print(f"  {direction} {rel_name:<12} : {other_name} (置信度:{r.confidence})")
+        
+        # 最近提及
+        mentions = self.entity_store.get_mentions_by_entity(entity.id, limit=5)
+        if mentions:
+            print(f"\n📝 最近提及:")
+            for m in mentions:
+                print(f"  • {m.event_time}: [{m.role}] {m.state_dimension or ''} {m.state_delta or ''}")
+                
+                print(f"  • {m.event_time}: [{m.role}] {m.state_dimension or ''} {m.state_delta or ''}")
+                
+        print("="*60 + "\n")
+
+    def run_visualize(self, output: str = "data/knowledge_graph.html"):
+        """生成知识图谱可视化"""
+        from src.visualization import generate_knowledge_graph_html
+        path = generate_knowledge_graph_html(self.entity_store, output)
+        print(f"✅ 可视化图谱已生成: {path}")
+        print(f"👉 请在浏览器中打开此文件查看交互式图谱")
+
 
 def parse_args():
     """解析命令行参数"""
@@ -550,6 +608,19 @@ def parse_args():
         "--backfill",
         action="store_true",
         help="运行实体回填任务"
+    )
+    
+    
+    parser.add_argument(
+        "--query", "-q",
+        type=str,
+        help="查询实体知识图谱 (输入实体名称)"
+    )
+    
+    parser.add_argument(
+        "--visualize",
+        action="store_true",
+        help="生成知识图谱可视化 HTML"
     )
     
     # 添加 telemetry 子命令
@@ -711,6 +782,14 @@ async def async_main():
         print(f"🔄 开始实体回填 (Limit: {args.limit or 100})...")
         await service.run_backfill(limit=args.limit or 100)
         print("✅ 回填完成！")
+        
+    elif args.query:
+        # 查询实体
+        service.run_query(args.query)
+        
+    elif args.visualize:
+        # 可视化
+        service.run_visualize()
     
     elif args.once:
         # 运行一次
