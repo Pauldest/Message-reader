@@ -16,6 +16,52 @@ class InformationType(str, Enum):
     DATA = "data"         # 数据类：财务数据、市场统计
 
 
+class StateChangeType(str, Enum):
+    """HEX 状态改变类型 - 六维分类"""
+    TECH = "TECH"               # 🧬 技术与产品突变
+    CAPITAL = "CAPITAL"         # 💰 资本与市场流动
+    REGULATION = "REGULATION"   # ⚖️ 规则与环境约束
+    ORG = "ORG"                  # 👔 组织与人事重组
+    RISK = "RISK"               # ⚠️ 风险与危机事件
+    SENTIMENT = "SENTIMENT"     # 🗣️ 共识与情绪转向
+
+
+# L3 母实体预设列表 (Root Entities)
+ROOT_ENTITIES = [
+    # 科技
+    "人工智能",
+    "半导体芯片",
+    "消费电子",
+    "云计算与数据中心",
+    "软件与开发工具",
+    "区块链与加密货币",
+    "网络安全",
+    # 互联网
+    "电商与零售",
+    "社交媒体",
+    "游戏与娱乐",
+    "内容与流媒体",
+    # 传统行业
+    "金融与银行",
+    "汽车与出行",
+    "能源与环境",
+    "医疗与生物科技",
+    "制造与工业",
+    # 宏观
+    "宏观经济",
+    "地缘政治",
+]
+
+
+class EntityAnchor(BaseModel):
+    """三级实体锚定 - 用于层级检索"""
+    l1_name: str              # 叶子实体 (DeepSeek, NVIDIA)
+    l1_role: str = "主角"     # 角色: 主角/配角/提及
+    l2_sector: str            # 细分领域 (基础模型, AI芯片)
+    l3_root: str              # 母实体 (人工智能, 半导体芯片)
+    confidence: float = 0.8   # 归类置信度
+
+
 class SourceReference(BaseModel):
     """来源引用 - 追踪信息的原始出处"""
     url: str
@@ -62,6 +108,13 @@ class InformationUnit(BaseModel):
     actionability: float = 5.0        # 行动指导性：是否能指导具体决策
     scarcity: float = 5.0             # 稀缺性：是否为一手信源
     impact_magnitude: float = 5.0     # 影响范围：涉及实体的权重
+    
+    # === HEX 状态分类 ===
+    state_change_type: str = ""       # 主分类: TECH/CAPITAL/REGULATION/ORG/RISK/SENTIMENT
+    state_change_subtypes: List[str] = Field(default_factory=list)  # 子分类: ["产品发布", "版本迭代"]
+    
+    # === 三级实体锚定 ===
+    entity_hierarchy: List[EntityAnchor] = Field(default_factory=list)  # 支持多实体多归属
     
     # === 5W1H 结构化 ===
     who: List[str] = Field(default_factory=list)
