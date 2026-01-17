@@ -10,50 +10,72 @@ from ..models.agent import AgentContext, AgentOutput
 
 logger = structlog.get_logger()
 
-INFO_CURATOR_SYSTEM_PROMPT = """你是一位洞察力极强的简报主编。你的任务是从一组"信息单元"中筛选出最有价值的内容，为用户生成一份高质量的日报。
+INFO_CURATOR_SYSTEM_PROMPT = """你是一位资深新闻主编，负责为用户筛选今日最有价值的信息。你必须严格把控质量，宁缺毋滥。
 
-## 筛选标准（优先级递减）
-1. **分析深度**：优先选择 `analysis_depth_score` 高的内容。用户想看深度解读，不仅仅是事实陈述。
-2. **重要性**：对行业、市场或社会有重大影响的事件。
-3. **时效性**：最新发生的重要信息。
+## 筛选原则（严格执行）
 
-## 你的工作流程
-1. **阅读与评估**：阅读所有输入的信息单元。
-2. **遴选 Top Picks**：选出 3-5 个最重要的信息单元作为"深度精选"。对于这些条目，**必须**完整展示其分析内容。
-3. **遴选 Quick Reads**：选出 5-10 个次重要的信息作为"快速浏览"。
+### 🚫 必须排除的内容
+1. **论坛帖子/个人求助**：如购房咨询、技术问答、个人经历分享
+2. **教程/技术文档摘录**：如"如何禁用XX功能"、代码问题解答
+3. **过于投机的观点**：无实质新闻事件支撑的纯预测或担忧
+4. **时效性差的旧闻**：复述已知事实而无新信息
+5. **标题党/低信息量**：标题夸张但内容空洞
+
+### ✅ 优先入选的内容
+1. **重大事件**：影响行业/市场/社会的突发新闻
+2. **深度分析**：有独到见解的解读，analysis_depth_score > 0.7
+3. **独家/稀缺信息**：其他来源难以获取的信息
+
+## 评分标准（必须使用完整区间）
+- **9.5-10**：仅用于改变行业格局的重大事件（每期最多1-2条）
+- **8.5-9.4**：重要且有深度的新闻（每期3-5条）
+- **7.5-8.4**：值得关注的良好内容
+- **6.5-7.4**：普通新闻，可作为快速浏览
+- **6.5以下**：不入选
+
+## 去重规则（严格执行）
+如果多条内容讲述**同一事件**（如"苹果与谷歌合作"），只保留**最有深度的一条**，其余排除。不要把相似内容都放入精选！
 
 ## 输出要求
-请输出一个 JSON 对象：
+
+返回 JSON：
 ```json
 {
-  "daily_summary": "今日简报导语（100字以内，概述今日重点趋势）",
+  "daily_summary": "今日一句话导语（50字以内）",
   "top_picks": [
     {
-       "id": "original_unit_id",
-       "display_title": "重写后的吸引人标题",
-       "reasoning": "入选理由",
-       "score": 9.5,
-       "presentation": {
-           "summary": "简明扼要的事实摘要",
-           "analysis": "深度分析内容（这是重点！请确保篇幅占比超过50%，整合 key_insights 和 analysis_content）",
-           "impact": "一句话影响评估"
-       }
+      "id": "unit_id",
+      "display_title": "重写后的精炼标题",
+      "score": 8.7,
+      "reasoning": "入选理由（说明价值点，20字以内）",
+      "presentation": {
+        "summary": "事实摘要（2-3句话）",
+        "analysis": "深度分析（这是核心！100-200字，解释意义和影响）",
+        "impact": "潜在影响（1-2句话）"
+      }
     }
   ],
   "quick_reads": [
     {
-       "id": "original_unit_id",
-       "display_title": "标题",
-       "one_line_summary": "一句话摘要"
+      "id": "unit_id",
+      "display_title": "标题",
+      "one_line_summary": "一句话概括（20字以内）"
     }
   ],
-  "excluded_count": 12
+  "excluded_reasons": {
+    "duplicate": ["id1", "id2"],
+    "irrelevant": ["id3"],
+    "low_quality": ["id4"]
+  }
 }
 ```
 
-## 注意事项
-- "深度精选"的内容必须经过润色，使其阅读体验极佳。
-- **分析部分是核心**。不要只罗列事实，要告诉用户这就意味着什么，未来会怎样。
+## 数量硬性限制
+- **top_picks: 5-8 条**（质量优先，可以更少，但不能超过8条）
+- **quick_reads: 5-15 条**
+- **总计不超过 20 条**
+
+记住：你是一个严格的主编，不是一个讨好读者的推荐算法。宁可漏掉一条好内容，也不能让垃圾内容进入精选！
 """
 
 class InformationCuratorAgent(BaseAgent):
@@ -74,58 +96,127 @@ class InformationCuratorAgent(BaseAgent):
         result = await self.curate(units, max_top_picks)
         return AgentOutput(success=True, data=result, trace=None)
 
-    async def curate(self, units: List[InformationUnit], max_top_picks: int = 5) -> Dict[str, Any]:
+    async def curate(self, units: List[InformationUnit], max_top_picks: int = 8) -> Dict[str, Any]:
         """执行筛选任务 (Internal)"""
         if not units:
             return {"top_picks": [], "quick_reads": [], "daily_summary": "无内容"}
             
         self.log_start(f"Curating from {len(units)} units")
         
-        # 1. 预排序：按重要性和深度
+        # 1. 过滤不适合的内容类型
+        filtered_units = self._filter_irrelevant_content(units)
+        logger.info("content_filtering", original=len(units), after_filter=len(filtered_units))
+        
+        # 2. 预排序：按重要性和深度
         sorted_units = sorted(
-            units, 
-            key=lambda u: (u.analysis_depth_score * 0.7 + u.importance_score * 0.3), 
+            filtered_units, 
+            key=lambda u: (u.analysis_depth_score * 0.6 + u.importance_score * 0.4), 
             reverse=True
         )
         
-        # 2. 本地去重 (Deduplication)
-        unique_units = self._deduplicate_units(sorted_units)
-        logger.info("deduplication_complete", original=len(units), unique=len(unique_units))
+        # 3. 本地去重 (提高阈值，更激进去重)
+        unique_units = self._deduplicate_units(sorted_units, threshold=0.45)
+        logger.info("deduplication_complete", original=len(filtered_units), unique=len(unique_units))
         
-        candidates = unique_units[:20]  # 只把最优秀的 20 个给 LLM 挑选
+        # 4. 只把最优秀的 25 个给 LLM 挑选
+        candidates = unique_units[:25]
         
         units_json = []
         for u in candidates:
+            # 添加来源信息帮助 AI 识别低质量内容
+            source_name = ""
+            if u.sources:
+                source_name = u.sources[0].source_name if hasattr(u.sources[0], 'source_name') else str(u.sources[0])
+            
             units_json.append({
                 "id": u.id,
                 "title": u.title,
-                "summary": u.summary,
-                "analysis_content": u.analysis_content[:500], # 截断以节省 token
-                "key_insights": u.key_insights,
-                "depth_score": u.analysis_depth_score,
-                "importance": u.importance_score
+                "source": source_name or u.primary_source,
+                "summary": u.summary[:300],
+                "analysis_content": u.analysis_content[:400] if u.analysis_content else "",
+                "key_insights": u.key_insights[:3] if u.key_insights else [],
+                "depth_score": round(u.analysis_depth_score, 2),
+                "importance": round(u.importance_score, 2)
             })
             
-        user_prompt = f"""
-        从以下候选列表中选出 {max_top_picks} 个精选内容作为 Top Picks，其余适合的内容作为 Quick Reads。
-        
-        候选列表：
-        {json.dumps(units_json, ensure_ascii=False, indent=2)}
-        """
+        user_prompt = f"""从以下 {len(candidates)} 个候选中严格筛选：
+
+**要求**：
+- Top Picks: 最多 {min(max_top_picks, 8)} 条（宁少勿滥）
+- Quick Reads: 最多 15 条
+- 相同事件只保留最优的一条
+- 排除论坛帖子、技术问答、个人求助类内容
+
+候选列表：
+{json.dumps(units_json, ensure_ascii=False, indent=2)}
+"""
         
         result, token_usage = await self.invoke_llm(
             user_prompt=user_prompt,
-            max_tokens=2500,
-            temperature=0.3,
+            max_tokens=3000,
+            temperature=0.2,  # 降低温度提高一致性
             json_mode=True
         )
         
         if not result or not isinstance(result, dict):
-            # Fallback
             logger.warning("curation_failed_using_fallback")
             return self._fallback_curation(unique_units, max_top_picks)
+        
+        # 5. 后处理：强制执行硬性限制
+        result = self._enforce_limits(result, max_top_picks)
             
-        self.log_complete(0, f"Selected {len(result.get('top_picks', []))} top picks")
+        self.log_complete(0, f"Selected {len(result.get('top_picks', []))} top picks, {len(result.get('quick_reads', []))} quick reads")
+        return result
+    
+    def _filter_irrelevant_content(self, units: List[InformationUnit]) -> List[InformationUnit]:
+        """过滤不适合的内容"""
+        # 低质量来源关键词
+        low_quality_sources = ['v2ex', 'segmentfault', 'stackoverflow', 'zhihu.com/question']
+        # 低质量标题关键词
+        irrelevant_keywords = ['求助', '请问', '如何', '怎么', '怎样', '购房', '买房', '租房', '面试']
+        
+        filtered = []
+        for u in units:
+            source_lower = (u.primary_source or "").lower()
+            title_lower = (u.title or "").lower()
+            
+            # 检查来源
+            is_low_quality_source = any(s in source_lower for s in low_quality_sources)
+            
+            # 检查标题
+            is_irrelevant_title = any(kw in title_lower for kw in irrelevant_keywords)
+            
+            # 检查分数门槛
+            is_low_score = u.importance_score < 0.5 and u.analysis_depth_score < 0.5
+            
+            if not is_low_quality_source and not is_irrelevant_title and not is_low_score:
+                filtered.append(u)
+            else:
+                logger.debug("filtered_out", id=u.id, title=u.title[:30], reason="low_quality_or_irrelevant")
+        
+        return filtered
+    
+    def _enforce_limits(self, result: Dict[str, Any], max_top_picks: int) -> Dict[str, Any]:
+        """强制执行数量限制"""
+        top_picks = result.get("top_picks", [])
+        quick_reads = result.get("quick_reads", [])
+        
+        # 强制限制 top_picks
+        if len(top_picks) > max_top_picks:
+            # 按 score 排序，保留最高的
+            top_picks = sorted(top_picks, key=lambda x: x.get("score", 0), reverse=True)[:max_top_picks]
+            result["top_picks"] = top_picks
+        
+        # 强制限制 quick_reads
+        if len(quick_reads) > 15:
+            result["quick_reads"] = quick_reads[:15]
+        
+        # 强制总数限制
+        total = len(result.get("top_picks", [])) + len(result.get("quick_reads", []))
+        if total > 20:
+            excess = total - 20
+            result["quick_reads"] = result.get("quick_reads", [])[:-excess] if excess > 0 else result.get("quick_reads", [])
+        
         return result
 
     def _deduplicate_units(self, units: List[InformationUnit], threshold: float = 0.55) -> List[InformationUnit]:
@@ -175,19 +266,39 @@ class InformationCuratorAgent(BaseAgent):
 
     def _fallback_curation(self, units: List[InformationUnit], max_picks: int) -> Dict[str, Any]:
         """降级策略：直接取前 N 个 (此时 units 已经去重且排序)"""
-        top = units[:max_picks]
-        rest = units[max_picks:max_picks+10]
+        # 应用过滤
+        filtered = self._filter_irrelevant_content(units)
+        
+        # 限制数量
+        max_picks = min(max_picks, 8)
+        top = filtered[:max_picks]
+        rest = filtered[max_picks:max_picks+12]
+        
+        def calc_display_score(u: InformationUnit) -> float:
+            """计算显示分数 (1-10 scale)"""
+            base = (u.analysis_depth_score * 0.6 + u.importance_score * 0.4) * 10
+            # 添加一些方差
+            return round(min(9.8, max(6.5, base)), 1)
+        
+        def generate_reasoning(u: InformationUnit) -> str:
+            """生成入选理由"""
+            if u.importance_score > 0.8:
+                return "重要性高，值得关注"
+            elif u.analysis_depth_score > 0.8:
+                return "分析深度较好"
+            else:
+                return "综合评分入选"
         
         return {
-            "daily_summary": "今日自动生成的简报（AI分析临时不可用，使用评分排序）",
+            "daily_summary": "今日自动简报（AI分析临时不可用）",
             "top_picks": [
                 {
                     "id": u.id,
-                    "score": round(u.analysis_depth_score * 10, 1),
+                    "score": calc_display_score(u),
                     "display_title": u.title,
-                    "reasoning": f"Score: {u.analysis_depth_score:.1f}",
+                    "reasoning": generate_reasoning(u),
                     "presentation": {
-                        "summary": u.summary,
+                        "summary": u.summary or "暂无摘要",
                         "analysis": u.analysis_content or "暂无深度分析",
                         "impact": u.impact_assessment or "暂无影响评估"
                     }
@@ -197,8 +308,8 @@ class InformationCuratorAgent(BaseAgent):
                 {
                     "id": u.id,
                     "display_title": u.title,
-                    "one_line_summary": u.summary
+                    "one_line_summary": u.summary[:50] if u.summary else u.title
                 } for u in rest
             ],
-            "excluded_count": max(0, len(units) - len(top) - len(rest))
+            "excluded_reasons": {}
         }
