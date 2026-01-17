@@ -11,6 +11,7 @@ from .merger import InformationMergerAgent
 from .info_curator import InformationCuratorAgent
 from .analysts import SkepticAnalyst, EconomistAnalyst, DetectiveAnalyst
 from .trace_manager import TraceManager
+from .entity_backfill import EntityBackfillAgent
 
 __all__ = [
     "BaseAgent",
@@ -24,4 +25,7 @@ __all__ = [
     "EconomistAnalyst",
     "DetectiveAnalyst",
     "TraceManager",
+    "InformationExtractorAgent",
+    "InformationMergerAgent",
+    "EntityBackfillAgent",
 ]

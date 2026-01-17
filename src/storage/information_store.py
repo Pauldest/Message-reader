@@ -68,14 +68,13 @@ class InformationStore:
             
             return unit
     
-    def save_unit(self, unit: InformationUnit):
+    async def save_unit(self, unit: InformationUnit):
         """保存或更新信息单元"""
         with self.db._get_conn() as conn:
             # 1. 保存主体信息
             self._save_unit_record(conn, unit)
             
-            # 2. 保存来源引用 (先删除旧的再插入，或者只插入新的？)
-            # 策略：删除该单元的所有旧来源，重新插入当前的 sources 列表
+            # 2. 保存来源引用
             conn.execute(
                 "DELETE FROM source_references WHERE unit_fingerprint = ?",
                 (unit.fingerprint,)
@@ -88,35 +87,18 @@ class InformationStore:
         
         # 3. 同步更新向量存储（用于语义搜索）
         if self.vector_store:
-            import asyncio
             try:
                 # 构建搜索文本：标题 + 摘要 + 关键洞察
                 search_text = f"{unit.title} {unit.summary} {' '.join(unit.key_insights)}"
-                asyncio.get_event_loop().run_until_complete(
-                    self.vector_store.add_article(
-                        article_id=unit.id,
-                        title=unit.title,
-                        content=search_text,
-                        metadata={
-                            "fingerprint": unit.fingerprint,
-                            "type": unit.type.value,
-                            "importance": unit.importance_score
-                        }
-                    )
-                )
-            except RuntimeError:
-                # 如果没有事件循环，创建一个临时的
-                asyncio.run(
-                    self.vector_store.add_article(
-                        article_id=unit.id,
-                        title=unit.title,
-                        content=search_text,
-                        metadata={
-                            "fingerprint": unit.fingerprint,
-                            "type": unit.type.value,
-                            "importance": unit.importance_score
-                        }
-                    )
+                await self.vector_store.add_article(
+                    article_id=unit.id,
+                    title=unit.title,
+                    content=search_text,
+                    metadata={
+                        "fingerprint": unit.fingerprint,
+                        "type": unit.type.value,
+                        "importance": unit.importance_score
+                    }
                 )
             except Exception as e:
                 logger.warning("vector_store_update_failed", error=str(e))

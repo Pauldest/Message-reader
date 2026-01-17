@@ -90,6 +90,11 @@ class RSSReaderService:
         # 初始化信息存储并注入协调器（传入向量存储以启用语义去重）
         self.info_store = InformationStore(self.db, vector_store=self.orchestrator.vector_store)
         self.orchestrator.set_information_store(self.info_store)
+        
+        # 🆕 初始化实体存储（知识图谱）
+        from .storage.entity_store import EntityStore
+        self.entity_store = EntityStore(self.db)
+        self.orchestrator.set_entity_store(self.entity_store)
     
     async def fetch_and_analyze(self, limit: int = None):
         """抓取并分析文章
@@ -467,6 +472,22 @@ class RSSReaderService:
         return []
 
 
+    async def run_backfill(self, limit: int = 100):
+        """运行实体回填"""
+        from src.agents import EntityBackfillAgent
+        from src.services.llm import LLMService
+        
+        logger.info("starting_entity_backfill", limit=limit)
+        
+        backfill_agent = EntityBackfillAgent(
+            llm_service=LLMService(self.config.ai),
+            info_store=self.info_store,
+            entity_store=self.entity_store
+        )
+        
+        await backfill_agent.run(limit=limit)
+
+
 def parse_args():
     """解析命令行参数"""
     parser = argparse.ArgumentParser(
@@ -523,6 +544,12 @@ def parse_args():
         type=int,
         default=None,
         help="限制分析的文章数量（用于测试）"
+    )
+    
+    parser.add_argument(
+        "--backfill",
+        action="store_true",
+        help="运行实体回填任务"
     )
     
     # 添加 telemetry 子命令
@@ -677,6 +704,13 @@ async def async_main():
         else:
             print("❌ 测试邮件发送失败，请检查配置")
             sys.exit(1)
+    
+            
+    elif args.backfill:
+        # 实体回填
+        print(f"🔄 开始实体回填 (Limit: {args.limit or 100})...")
+        await service.run_backfill(limit=args.limit or 100)
+        print("✅ 回填完成！")
     
     elif args.once:
         # 运行一次

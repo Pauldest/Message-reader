@@ -9,9 +9,11 @@ from ..config import AppConfig
 from ..models.article import Article, EnrichedArticle
 from ..models.agent import AgentContext, AgentOutput, AgentTrace, AnalysisMode
 from ..models.information import InformationUnit
+from ..models.entity import ExtractedEntity, ExtractedRelation
 from ..services.llm import LLMService
 from ..storage.vector_store import VectorStore
 from ..storage.information_store import InformationStore
+from ..storage.entity_store import EntityStore
 
 from .collector import CollectorAgent
 from .librarian import LibrarianAgent
@@ -63,12 +65,17 @@ class AnalysisOrchestrator:
         
         # 新架构组件
         self.info_store: Optional[InformationStore] = None
+        self.entity_store: Optional[EntityStore] = None  # 🆕 知识图谱存储
         self.extractor = InformationExtractorAgent(self.llm_service)
         self.merger = InformationMergerAgent(self.llm_service)
 
     def set_information_store(self, store: InformationStore):
         """注入 InformationStore"""
         self.info_store = store
+    
+    def set_entity_store(self, store: EntityStore):
+        """注入 EntityStore (知识图谱)"""
+        self.entity_store = store
     
     async def analyze_article(
         self, 
@@ -363,7 +370,7 @@ class AnalysisOrchestrator:
                 if existing:
                     logger.info("merging_exact_fingerprint_match", fingerprint=unit.fingerprint)
                     merged = await self.merger.merge([existing, unit])
-                    self.info_store.save_unit(merged)
+                    await self.info_store.save_unit(merged)
                     final_units.append(merged)
                     
                     if self.trace_manager:
@@ -395,7 +402,7 @@ class AnalysisOrchestrator:
                     merged.id = similar_units[0].id
                     merged.fingerprint = similar_units[0].fingerprint
                     
-                    self.info_store.save_unit(merged)
+                    await self.info_store.save_unit(merged)
                     final_units.append(merged)
                     
                     if self.trace_manager:
@@ -411,8 +418,44 @@ class AnalysisOrchestrator:
                         )
                 else:
                     # 完全新的单元
-                    self.info_store.save_unit(unit)
+                    await self.info_store.save_unit(unit)
                     final_units.append(unit)
+                
+                # 🆕 处理实体和关系 (构建知识图谱)
+                if self.entity_store and (unit.extracted_entities or unit.extracted_relations):
+                    try:
+                        # 转换为 ExtractedEntity 对象
+                        extracted_entities = [
+                            ExtractedEntity(
+                                name=e.get("name", ""),
+                                aliases=e.get("aliases", []),
+                                type=e.get("type", "COMPANY"),
+                                role=e.get("role", "主角"),
+                                state_change=e.get("state_change"),
+                            ) for e in unit.extracted_entities if isinstance(e, dict) and e.get("name")
+                        ]
+                        
+                        extracted_relations = [
+                            ExtractedRelation(
+                                source=r.get("source", ""),
+                                target=r.get("target", ""),
+                                relation=r.get("relation", "peer"),
+                                evidence=r.get("evidence", ""),
+                            ) for r in unit.extracted_relations if isinstance(r, dict) and r.get("source")
+                        ]
+                        
+                        if extracted_entities:
+                            entity_id_map = self.entity_store.process_extracted_entities(
+                                unit_id=unit.id,
+                                entities=extracted_entities,
+                                relations=extracted_relations,
+                                event_time=unit.event_time,
+                            )
+                            logger.debug("entities_processed", 
+                                        unit_id=unit.id, 
+                                        entity_count=len(entity_id_map))
+                    except Exception as e:
+                        logger.warning("entity_processing_failed", unit_id=unit.id, error=str(e))
             
             if self.trace_manager:
                 self.trace_manager.end_session()

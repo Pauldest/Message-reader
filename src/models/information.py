@@ -140,6 +140,10 @@ class InformationUnit(BaseModel):
     entities: List[Entity] = Field(default_factory=list)
     tags: List[str] = Field(default_factory=list)
     
+    # === 提取的实体和关系 (用于知识图谱构建) ===
+    extracted_entities: List[dict] = Field(default_factory=list)    # 从文本提取的实体
+    extracted_relations: List[dict] = Field(default_factory=list)   # 从文本提取的关系
+    
     # === 元数据 ===
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)

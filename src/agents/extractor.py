@@ -93,13 +93,37 @@ EXTRACTOR_SYSTEM_PROMPT = """你是一位专业的情报提取与分析专家。
   "information_gain": 8,
   "actionability": 9,
   "scarcity": 9,
-  "impact_magnitude": 9
+  "impact_magnitude": 9,
+  "entities_mentioned": [
+    {"name": "NVIDIA", "aliases": ["英伟达", "Nvidia"], "type": "COMPANY", "role": "主角", "state_change": {"dimension": "TECH", "delta": "发布RTX5090"}},
+    {"name": "AMD", "aliases": ["超威"], "type": "COMPANY", "role": "提及"}
+  ],
+  "entity_relations": [
+    {"source": "NVIDIA", "target": "AMD", "relation": "competitor", "evidence": "在GPU市场展开竞争"}
+  ]
 }
 ```
+
+### 🔗 实体识别（必填！）
+为了构建知识图谱，请识别所有涉及的实体：
+
+`entities_mentioned` 列表，每个包含:
+- `name`: 原文中的名称
+- `aliases`: 可能的别名列表（中英文、简称等）
+- `type`: COMPANY/PERSON/PRODUCT/ORG/CONCEPT
+- `role`: 主角/配角/提及
+- `state_change`: 如果该实体有状态变化 {"dimension": "TECH/CAPITAL/...", "delta": "变化描述"}
+
+`entity_relations` 列表（如有多个实体），每个包含:
+- `source`: 源实体名
+- `target`: 目标实体名
+- `relation`: competitor/partner/supplier/customer/investor/ceo_of/founder_of
+- `evidence`: 支撑关系的原文片段
 
 ## 注意事项
 - 论坛帖子、技术问答等非新闻内容，4维评分应偏低（≤4）
 - 分析内容必须有实质性，避免废话
+- 实体别名要尽可能全面，包含中英文、简称等
 """
 
 class InformationExtractorAgent(BaseAgent):
@@ -281,6 +305,10 @@ class InformationExtractorAgent(BaseAgent):
             entities=entities,
             tags=item.get("tags", []),
             created_at=article.fetched_at,
-            sources=[source_ref]
+            sources=[source_ref],
+            
+            # 🆕 知识图谱数据
+            extracted_entities=item.get("entities_mentioned", []),
+            extracted_relations=item.get("entity_relations", []),
         )
 
