@@ -203,7 +203,51 @@ class RSSReaderService:
             from src.agents import CuratorAgent, InformationCuratorAgent
             from src.services.llm import LLMService
 
-            unsent_units = self.info_store.get_unsent_units(limit=50)
+
+            # 获取更多候选项以防止因过滤导致数量不足
+            # limit 从 50 增加到 200，因为 SQL 排序基于文本可能不准确
+            unsent_units = self.info_store.get_unsent_units(limit=200)
+            
+            # 🆕 过滤掉 when_time 超过 6 个月的信息单元
+            import re
+            from datetime import timedelta
+            cutoff_date = datetime.now() - timedelta(days=180)
+            
+            def is_recent_event(unit) -> bool:
+                """检查事件是否在最近6个月内发生"""
+                when = unit.when or ""
+                # 尝试提取年月日
+                match = re.search(r'(\d{4})年?(\d{1,2})月?(\d{1,2})?日?', when)
+                if match:
+                    year, month = int(match.group(1)), int(match.group(2))
+                    day = int(match.group(3)) if match.group(3) else 1
+                    try:
+                        event_date = datetime(year, month, day)
+                        return event_date >= cutoff_date
+                    except:
+                        pass
+                # 匹配 2024-09-05 格式
+                match = re.search(r'(\d{4})-(\d{2})-(\d{2})', when)
+                if match:
+                    try:
+                        event_date = datetime(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+                        return event_date >= cutoff_date
+                    except:
+                        pass
+                # 无法解析的保留（可能是近期事件但格式不标准）
+                return True
+            
+            original_count = len(unsent_units)
+            unsent_units = [u for u in unsent_units if is_recent_event(u)]
+            
+            if original_count != len(unsent_units):
+                logger.info("filtered_old_events", 
+                          original=original_count, 
+                          kept=len(unsent_units), 
+                          removed=original_count - len(unsent_units))
+            
+            # 再次按时间排序（内存中准确排序）
+            # ... (后续代码会处理 LLM 排序，这里先确保输入列表够新)
             
             if len(unsent_units) >= 1: # Even 1 is enough for a digest if manual limit/once
                  # Use Information Centric Curation logic directly
@@ -359,6 +403,32 @@ class RSSReaderService:
                     if article.unit_id in related_readings:
                         related_data = related_readings[article.unit_id]
                         article.related_articles = related_data.get("articles", [])
+                
+                # 🆕 按事件时间排序（最近的在前面）
+                def parse_event_time(article):
+                    """尝试从 event_time 字符串中提取日期用于排序"""
+                    import re
+                    et = article.event_time or ""
+                    # 尝试提取年月日
+                    match = re.search(r'(\d{4})年?(\d{1,2})月?(\d{1,2})?日?', et)
+                    if match:
+                        year, month = int(match.group(1)), int(match.group(2))
+                        day = int(match.group(3)) if match.group(3) else 1
+                        try:
+                            return datetime(year, month, day)
+                        except:
+                            pass
+                    # 匹配 2026-01-15 格式
+                    match = re.search(r'(\d{4})-(\d{2})-(\d{2})', et)
+                    if match:
+                        try:
+                            return datetime(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+                        except:
+                            pass
+                    return datetime(1970, 1, 1)  # 默认为最早时间
+                
+                top_picks = sorted(top_picks, key=parse_event_time, reverse=True)
+                other_articles = sorted(other_articles, key=parse_event_time, reverse=True)
                 
                 # Create Digest Object
                 digest = DailyDigest(
