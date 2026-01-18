@@ -268,13 +268,20 @@ class InformationStore:
     
     def _row_to_unit(self, row: sqlite3.Row) -> InformationUnit:
         """将数据库行转换为对象"""
-        def parse_json(field_name: str, default=None):
+        def parse_json(field_name: str, default=None, wrap_string=False):
             val = row[field_name]
             if not val:
                 return default or []
             try:
-                return json.loads(val)
+                parsed = json.loads(val)
+                # 如果期望列表但解析出字符串，包装成列表
+                if wrap_string and isinstance(parsed, str):
+                    return [parsed]
+                return parsed
             except json.JSONDecodeError:
+                # 如果不是有效 JSON，且 wrap_string 为 True，则包装成列表
+                if wrap_string:
+                    return [val]
                 return default or []
 
         entities_data = parse_json("entities")
@@ -291,7 +298,7 @@ class InformationStore:
             analysis_content=row["analysis_content"] or "",
             key_insights=parse_json("key_insights"),
             analysis_depth_score=row["analysis_depth_score"] or 0.0,
-            who=parse_json("who"),
+            who=parse_json("who", wrap_string=True),
             what=row["what"] or "",
             when=row["when_time"] or "",  # 注意字段名映射
             where=row["where_place"] or "",

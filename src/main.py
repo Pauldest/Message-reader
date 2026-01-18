@@ -724,6 +724,12 @@ def parse_args():
         help="重新处理「已保存但未生成 units」的文章"
     )
     
+    parser.add_argument(
+        "--digest",
+        action="store_true",
+        help="直接发送每日摘要邮件（不抓取新文章）"
+    )
+    
     # 添加 telemetry 子命令
     subparsers = parser.add_subparsers(dest="command", help="子命令")
     
@@ -896,6 +902,12 @@ async def async_main():
         # 重新处理失败的文章
         print(f"🔄 开始重新处理失败的文章 (Limit: {args.limit or 100})...")
         await service.run_reprocess(limit=args.limit or 100)
+    
+    elif args.digest:
+        # 直接发送每日摘要
+        print("📧 正在发送每日摘要...")
+        await service.send_daily_digest()
+        print("✅ 摘要发送完成！")
     
     elif args.once:
         # 运行一次
