@@ -98,11 +98,31 @@
             <!-- Feeds View -->
             <div id="view-feeds" class="view-section">
                 <div class="actions-bar">
-                    <input type="text" id="feed-url-input" placeholder="输入 RSS Feed URL">
-                    <button id="btn-add-feed" class="btn primary">添加订阅</button>
+                    <input type="text" id="feed-url-input" class="input-field" placeholder="RSS/Atom URL (必填)"
+                        style="flex: 2">
+                    <input type="text" id="feed-name-input" class="input-field" placeholder="名称 (可选, 自动获取)"
+                        style="flex: 1">
+                    <input type="text" id="feed-category-input" class="input-field" placeholder="分类 (可选)"
+                        style="flex: 1">
+                    <button id="btn-add-feed" class="btn primary">
+                        <span class="icon">➕</span> 添加订阅
+                    </button>
                 </div>
                 <div class="feeds-list" id="feeds-list-container">
-                    <!-- Feeds loaded via JS -->
+                    <table class="feeds-table">
+                        <thead>
+                            <tr>
+                                <th width="80">状态</th>
+                                <th width="200">名称</th>
+                                <th width="120">分类</th>
+                                <th>URL</th>
+                                <th width="80">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="feeds-table-body">
+                            <!-- Feeds loaded via JS -->
+                        </tbody>
+                    </table>
                 </div>
             </div>
 

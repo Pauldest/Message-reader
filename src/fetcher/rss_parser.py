@@ -88,13 +88,15 @@ class RSSParser:
         articles = []
         
         # 限制只抓取最近 6 个月的文章
-        cutoff_date = datetime.now() - timedelta(days=180)
+        # Ensure cutoff_date is timezone-aware (UTC)
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=180)
         
         for entry in parsed.entries:
             try:
                 article = self._entry_to_article(entry, feed)
                 if article:
                     # 过滤掉超过 6 个月的文章
+                    # Both times should now be aware
                     if article.published_at and article.published_at < cutoff_date:
                         continue
                     articles.append(article)
@@ -135,7 +137,17 @@ class RSSParser:
             if hasattr(entry, date_field):
                 try:
                     date_str = getattr(entry, date_field)
-                    published_at = date_parser.parse(date_str)
+                    dt = date_parser.parse(date_str)
+                    
+                    # Normalize to UTC
+                    if dt.tzinfo is None:
+                        # If naive, assume UTC (standard for RSS) or Local? 
+                        # Assuming UTC is safer for standardization, or use local machine time
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    else:
+                        dt = dt.astimezone(timezone.utc)
+                        
+                    published_at = dt
                     break
                 except:
                     pass
@@ -156,5 +168,5 @@ class RSSParser:
             category=feed.category,
             author=author,
             published_at=published_at,
-            fetched_at=datetime.now(),
+            fetched_at=datetime.now(timezone.utc),
         )
