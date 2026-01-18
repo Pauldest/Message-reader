@@ -238,13 +238,14 @@ class RSSReaderService:
                 return True
             
             original_count = len(unsent_units)
+            filtered_out_units = [u for u in unsent_units if not is_recent_event(u)]
             unsent_units = [u for u in unsent_units if is_recent_event(u)]
             
             if original_count != len(unsent_units):
                 logger.info("filtered_old_events", 
                           original=original_count, 
                           kept=len(unsent_units), 
-                          removed=original_count - len(unsent_units))
+                          removed=len(filtered_out_units))
             
             # 再次按时间排序（内存中准确排序）
             # ... (后续代码会处理 LLM 排序，这里先确保输入列表够新)
@@ -352,6 +353,13 @@ class RSSReaderService:
                     
                 # Mark units as sent (include excluded as well)
                 sent_ids = [item.get("id") for item in curation_result["top_picks"] + curation_result["quick_reads"] + curation_result.get("excluded", [])]
+                
+                # 🆕 同时标记因过期而被过滤的单元为已发送，防止重复循环
+                if 'filtered_out_units' in locals() and filtered_out_units:
+                    filtered_ids = [u.id for u in filtered_out_units]
+                    sent_ids.extend(filtered_ids)
+                    logger.info("marking_filtered_as_sent", count=len(filtered_ids))
+                
                 self.info_store.mark_units_sent(sent_ids)
                 
                 # 🆕 知识图谱增强：热点趋势分析
