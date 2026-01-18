@@ -723,3 +723,66 @@ class EntityStore:
                 result[unit_id] = entities
             
             return result
+
+    def get_entity_daily_mentions(self, entity_ids: List[str] = None, days: int = 7) -> Dict[str, Dict[str, int]]:
+        """
+        获取实体每日提及次数（用于生成趋势图）
+        
+        Args:
+            entity_ids: 要查询的实体 ID 列表，如果为空则查询热门实体
+            days: 查询天数
+            
+        Returns:
+            {entity_name: {"2026-01-15": 10, "2026-01-16": 15, ...}}
+        """
+        from datetime import timedelta
+        
+        with self.db._get_conn() as conn:
+            cursor = conn.cursor()
+            
+            # 如果没有指定实体，则获取热门实体
+            if not entity_ids:
+                now = datetime.now()
+                start_date = now - timedelta(days=days)
+                
+                cursor.execute("""
+                    SELECT e.id, e.canonical_name, COUNT(m.id) as cnt
+                    FROM entities e
+                    JOIN entity_mentions m ON e.id = m.entity_id
+                    WHERE m.created_at >= ?
+                    GROUP BY e.id
+                    ORDER BY cnt DESC
+                    LIMIT 8
+                """, (start_date,))
+                
+                entity_list = [(row[0], row[1]) for row in cursor.fetchall()]
+            else:
+                entity_list = []
+                for eid in entity_ids:
+                    entity = self.get_entity(eid)
+                    if entity:
+                        entity_list.append((eid, entity.canonical_name))
+            
+            result = {}
+            now = datetime.now()
+            
+            for entity_id, entity_name in entity_list:
+                daily_counts = {}
+                
+                for i in range(days):
+                    date = now - timedelta(days=days - 1 - i)
+                    date_str = date.strftime("%m-%d")
+                    day_start = date.replace(hour=0, minute=0, second=0, microsecond=0)
+                    day_end = date.replace(hour=23, minute=59, second=59, microsecond=999999)
+                    
+                    cursor.execute("""
+                        SELECT COUNT(*) FROM entity_mentions
+                        WHERE entity_id = ? AND created_at >= ? AND created_at <= ?
+                    """, (entity_id, day_start, day_end))
+                    
+                    count = cursor.fetchone()[0]
+                    daily_counts[date_str] = count
+                
+                result[entity_name] = daily_counts
+            
+            return result

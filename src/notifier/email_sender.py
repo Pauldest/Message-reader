@@ -29,7 +29,7 @@ class EmailSender:
             autoescape=select_autoescape(["html", "xml"]),
         )
     
-    async def send_digest(self, digest: DailyDigest) -> bool:
+    async def send_digest(self, digest: DailyDigest, trend_chart_path: str = None) -> bool:
         """发送每日简报"""
         if not self.config.to_addrs:
             logger.warning("no_recipients_configured")
@@ -39,15 +39,35 @@ class EmailSender:
             # 渲染邮件内容
             html_content = self._render_digest(digest)
             
-            # 构建邮件
-            msg = MIMEMultipart("alternative")
+            # 构建邮件 - 使用 related 类型以支持内嵌图片
+            msg = MIMEMultipart("related")
             msg["Subject"] = f"AI 阅读简报 - {digest.date.strftime('%Y-%m-%d')}"
             msg["From"] = self.config.from_addr
             msg["To"] = ", ".join(self.config.to_addrs)
             
             # 添加 HTML 内容
+            msg_alternative = MIMEMultipart("alternative")
             html_part = MIMEText(html_content, "html", "utf-8")
-            msg.attach(html_part)
+            msg_alternative.attach(html_part)
+            msg.attach(msg_alternative)
+            
+            # 添加趋势图图片作为内嵌附件
+            if trend_chart_path:
+                try:
+                    from email.mime.image import MIMEImage
+                    import os
+                    
+                    if os.path.exists(trend_chart_path):
+                        with open(trend_chart_path, 'rb') as f:
+                            img_data = f.read()
+                        
+                        img = MIMEImage(img_data, _subtype="png")
+                        img.add_header('Content-ID', '<trend_chart>')
+                        img.add_header('Content-Disposition', 'inline', filename='trend_chart.png')
+                        msg.attach(img)
+                        logger.debug("trend_chart_attached", path=trend_chart_path)
+                except Exception as e:
+                    logger.warning("trend_chart_attach_failed", error=str(e))
             
             # 发送邮件
             if self.config.use_ssl:

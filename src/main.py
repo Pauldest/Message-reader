@@ -434,9 +434,20 @@ class RSSReaderService:
                 daily_summary=curation_result.get("daily_summary", "")[:100],
             )
             
+            # 🆕 生成热点趋势图表
+            trend_chart_path = None
+            try:
+                from src.visualization.trend_chart import generate_trend_chart
+                
+                daily_data = self.entity_store.get_entity_daily_mentions(days=7)
+                if daily_data:
+                    trend_chart_path = generate_trend_chart(daily_data, "data/trend_chart.png")
+                    logger.info("trend_chart_generated", path=trend_chart_path)
+            except Exception as e:
+                logger.warning("trend_chart_generation_failed", error=str(e))
+            
             # 发送邮件
-            # 发送邮件
-            success = await self.email_sender.send_digest(digest)
+            success = await self.email_sender.send_digest(digest, trend_chart_path=trend_chart_path)
             
             if success:
                 logger.info("digest_sent_successfully",
