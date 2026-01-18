@@ -897,6 +897,12 @@ def parse_args():
         action="store_true",
         help="直接发送每日摘要邮件（不抓取新文章）"
     )
+
+    parser.add_argument(
+        "--web",
+        action="store_true",
+        help="启动 Web UI 控制台"
+    )
     
     # 添加 telemetry 子命令
     subparsers = parser.add_subparsers(dest="command", help="子命令")
@@ -1016,6 +1022,16 @@ async def async_main():
     """异步主函数"""
     args = parse_args()
     
+    # 启动 Web UI
+    if args.web:
+        import uvicorn
+        from src.web.server import app
+        print("🌍 启动 Web 控制台: http://localhost:8000")
+        config = uvicorn.Config(app, host="0.0.0.0", port=8000, log_level="info")
+        server = uvicorn.Server(config)
+        await server.serve()
+        return
+
     # 加载配置
     if args.config_dir:
         config = reload_config(Path(args.config_dir))

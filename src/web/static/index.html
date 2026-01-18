@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Message Reader Control Center</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link
+        href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;500;600&display=swap"
+        rel="stylesheet">
+</head>
+
+<body class="dark-theme">
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="logo">
+                <span class="icon">⚡</span>
+                <h1>Message Reader</h1>
+            </div>
+
+            <nav class="nav-menu">
+                <button class="nav-item active" data-target="dashboard">
+                    <span class="icon">📊</span> 仪表盘
+                </button>
+                <button class="nav-item" data-target="feeds">
+                    <span class="icon">📡</span> 订阅源
+                </button>
+                <button class="nav-item" data-target="database">
+                    <span class="icon">💾</span> 数据库
+                </button>
+            </nav>
+
+            <div class="status-panel">
+                <h3>System Status</h3>
+                <div class="status-item">
+                    <span>State:</span>
+                    <span id="system-state" class="badge idle">Idle</span>
+                </div>
+                <div class="status-item">
+                    <span>Mode:</span>
+                    <span id="system-mode">Loading...</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Header -->
+            <header class="top-bar">
+                <h2 id="page-title">仪表盘</h2>
+                <div class="controls">
+                    <button id="btn-run" class="btn primary">
+                        <span class="icon">▶</span> 运行抓取 & 分析
+                    </button>
+                    <button id="btn-digest" class="btn secondary">
+                        <span class="icon">📧</span> 仅生成日报
+                    </button>
+                    <button id="btn-stop" class="btn danger" disabled>
+                        <span class="icon">⏹</span> 停止
+                    </button>
+                </div>
+            </header>
+
+            <!-- Dashboard View -->
+            <div id="view-dashboard" class="view-section active">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <h3>今日抓取</h3>
+                        <p class="stat-value" id="stat-fetched">-</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>AI 分析</h3>
+                        <p class="stat-value" id="stat-analyzed">-</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>未发送</h3>
+                        <p class="stat-value" id="stat-unsent">-</p>
+                    </div>
+                </div>
+
+                <div class="logs-container">
+                    <div class="logs-header">
+                        <h3>实时运行日志</h3>
+                        <div class="logs-actions">
+                            <button id="btn-clear-logs" class="btn small">清除</button>
+                            <label><input type="checkbox" id="auto-scroll" checked> 自动滚动</label>
+                        </div>
+                    </div>
+                    <div id="terminal-output" class="terminal-window">
+                        <!-- Logs will appear here -->
+                        <div class="log-entry system">等待连接 WebSocket...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Feeds View -->
+            <div id="view-feeds" class="view-section">
+                <div class="actions-bar">
+                    <input type="text" id="feed-url-input" placeholder="输入 RSS Feed URL">
+                    <button id="btn-add-feed" class="btn primary">添加订阅</button>
+                </div>
+                <div class="feeds-list" id="feeds-list-container">
+                    <!-- Feeds loaded via JS -->
+                </div>
+            </div>
+
+            <!-- Database View -->
+            <div id="view-database" class="view-section">
+                <div class="tabs">
+                    <button class="tab-btn active" data-table="articles">文章列表</button>
+                    <button class="tab-btn" data-table="info_units">信息单元</button>
+                </div>
+                <div class="data-grid-container">
+                    <table class="data-grid">
+                        <thead id="db-table-head">
+                            <!-- Headers -->
+                        </thead>
+                        <tbody id="db-table-body">
+                            <!-- Rows -->
+                        </tbody>
+                    </table>
+                </div>
+                <div class="pagination">
+                    <button id="btn-prev-page" class="btn small">上一页</button>
+                    <span id="page-info">Page 1</span>
+                    <button id="btn-next-page" class="btn small">下一页</button>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Templates -->
+    <template id="log-entry-template">
+        <div class="log-entry">
+            <span class="log-time"></span>
+            <span class="log-level"></span>
+            <span class="log-logger"></span>
+            <span class="log-message"></span>
+        </div>
+    </template>
+
+    <script src="/static/js/app.js"></script>
+</body>
+
+</html>
