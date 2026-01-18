@@ -30,20 +30,75 @@ class EmailSender:
         )
     
     async def send_digest(self, digest: DailyDigest, trend_chart_path: str = None) -> bool:
-        """发送每日简报"""
+        """发送每日简报 - 为每个收件人单独发送"""
         if not self.config.to_addrs:
             logger.warning("no_recipients_configured")
             return False
         
+        # 渲染邮件内容（只渲染一次）
+        html_content = self._render_digest(digest)
+        
+        # 预加载趋势图数据
+        trend_chart_data = None
+        if trend_chart_path:
+            try:
+                import os
+                if os.path.exists(trend_chart_path):
+                    with open(trend_chart_path, 'rb') as f:
+                        trend_chart_data = f.read()
+                    logger.debug("trend_chart_loaded", path=trend_chart_path)
+            except Exception as e:
+                logger.warning("trend_chart_load_failed", error=str(e))
+        
+        # 为每个收件人单独发送邮件
+        success_count = 0
+        failed_recipients = []
+        
+        for recipient in self.config.to_addrs:
+            try:
+                success = await self._send_to_single_recipient(
+                    recipient=recipient,
+                    digest=digest,
+                    html_content=html_content,
+                    trend_chart_data=trend_chart_data
+                )
+                if success:
+                    success_count += 1
+                else:
+                    failed_recipients.append(recipient)
+            except Exception as e:
+                logger.error("email_send_failed_to_recipient", 
+                           recipient=recipient, error=str(e))
+                failed_recipients.append(recipient)
+        
+        # 记录发送结果
+        logger.info("digest_sent_summary",
+                   total_recipients=len(self.config.to_addrs),
+                   success=success_count,
+                   failed=len(failed_recipients),
+                   top_picks=len(digest.top_picks))
+        
+        if failed_recipients:
+            logger.warning("some_emails_failed", failed_recipients=failed_recipients)
+        
+        return success_count > 0
+    
+    async def _send_to_single_recipient(
+        self, 
+        recipient: str, 
+        digest: DailyDigest, 
+        html_content: str,
+        trend_chart_data: bytes = None
+    ) -> bool:
+        """发送邮件给单个收件人"""
         try:
-            # 渲染邮件内容
-            html_content = self._render_digest(digest)
+            from email.mime.image import MIMEImage
             
-            # 构建邮件 - 使用 related 类型以支持内嵌图片
+            # 构建邮件
             msg = MIMEMultipart("related")
             msg["Subject"] = f"AI 阅读简报 - {digest.date.strftime('%Y-%m-%d')}"
             msg["From"] = self.config.from_addr
-            msg["To"] = ", ".join(self.config.to_addrs)
+            msg["To"] = recipient  # 单个收件人
             
             # 添加 HTML 内容
             msg_alternative = MIMEMultipart("alternative")
@@ -51,23 +106,15 @@ class EmailSender:
             msg_alternative.attach(html_part)
             msg.attach(msg_alternative)
             
-            # 添加趋势图图片作为内嵌附件
-            if trend_chart_path:
+            # 添加趋势图图片
+            if trend_chart_data:
                 try:
-                    from email.mime.image import MIMEImage
-                    import os
-                    
-                    if os.path.exists(trend_chart_path):
-                        with open(trend_chart_path, 'rb') as f:
-                            img_data = f.read()
-                        
-                        img = MIMEImage(img_data, _subtype="png")
-                        img.add_header('Content-ID', '<trend_chart>')
-                        img.add_header('Content-Disposition', 'inline', filename='trend_chart.png')
-                        msg.attach(img)
-                        logger.debug("trend_chart_attached", path=trend_chart_path)
+                    img = MIMEImage(trend_chart_data, _subtype="png")
+                    img.add_header('Content-ID', '<trend_chart>')
+                    img.add_header('Content-Disposition', 'inline', filename='trend_chart.png')
+                    msg.attach(img)
                 except Exception as e:
-                    logger.warning("trend_chart_attach_failed", error=str(e))
+                    logger.warning("trend_chart_attach_failed", recipient=recipient, error=str(e))
             
             # 发送邮件
             if self.config.use_ssl:
@@ -89,13 +136,11 @@ class EmailSender:
                     start_tls=True,
                 )
             
-            logger.info("digest_sent",
-                       recipients=len(self.config.to_addrs),
-                       top_picks=len(digest.top_picks))
+            logger.debug("email_sent_to_recipient", recipient=recipient)
             return True
         
         except Exception as e:
-            logger.error("email_send_failed", error=str(e))
+            logger.error("email_send_failed", recipient=recipient, error=str(e))
             return False
     
     def _render_digest(self, digest: DailyDigest) -> str:
