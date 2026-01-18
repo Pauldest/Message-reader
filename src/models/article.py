@@ -5,7 +5,7 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 from .analysis import (
-    Entity,
+    SimpleEntity,
     SourceCredibility,
     BiasAnalysis,
     FactCheckResult,
@@ -73,7 +73,7 @@ class EnrichedArticle(BaseModel):
     where: str = ""  # 地点
     why: str = ""   # 原因
     how: str = ""   # 过程/方式
-    entities: list[Entity] = Field(default_factory=list)  # 识别的实体
+    entities: list[SimpleEntity] = Field(default_factory=list)  # 识别的实体
     timeline: list[TimelineEvent] = Field(default_factory=list)  # 时间线
     
     # === 验证层分析 ===

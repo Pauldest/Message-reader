@@ -7,7 +7,7 @@ import structlog
 from .base import BaseAgent
 from ..models.article import Article, EnrichedArticle
 from ..models.analysis import (
-    Entity, SourceCredibility, BiasAnalysis, FactCheckResult,
+    SimpleEntity, SourceCredibility, BiasAnalysis, FactCheckResult,
     ImpactAnalysis, RiskWarning, SentimentAnalysis, MarketSentiment,
     KnowledgeGraph,
 )
@@ -310,7 +310,7 @@ class EditorAgent(BaseAgent):
             where=extracted.get("where", ""),
             why=extracted.get("why", ""),
             how=extracted.get("how", ""),
-            entities=[e if isinstance(e, Entity) else Entity(**e) for e in (context.entities or []) if isinstance(e, (Entity, dict))],
+            entities=[e if isinstance(e, SimpleEntity) else SimpleEntity(**e) for e in (context.entities or []) if isinstance(e, (SimpleEntity, dict))],
             timeline=extracted.get("timeline", []),
             
             # 验证层

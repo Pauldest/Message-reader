@@ -2,7 +2,7 @@
 
 from .article import Article, EnrichedArticle
 from .analysis import (
-    Entity,
+    SimpleEntity,
     SourceCredibility,
     BiasAnalysis,
     FactCheckResult,
@@ -21,7 +21,7 @@ __all__ = [
     "Article",
     "EnrichedArticle",
     # Analysis models
-    "Entity",
+    "SimpleEntity",
     "SourceCredibility",
     "BiasAnalysis",
     "FactCheckResult",

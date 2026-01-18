@@ -117,7 +117,7 @@ class KnowledgeGraph(BaseModel):
     nodes: list[KnowledgeGraphNode] = Field(default_factory=list)
     edges: list[KnowledgeGraphEdge] = Field(default_factory=list)
     
-    def add_entity(self, entity: Entity) -> str:
+    def add_entity(self, entity: SimpleEntity) -> str:
         """添加实体节点"""
         node_id = f"{entity.type}_{entity.name}".replace(" ", "_")
         self.nodes.append(KnowledgeGraphNode(
