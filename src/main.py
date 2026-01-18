@@ -53,9 +53,10 @@ logger = structlog.get_logger()
 class RSSReaderService:
     """RSS 阅读器服务 (Multi-Agent Version)"""
     
-    def __init__(self, config: AppConfig, analysis_mode: str = "deep", concurrency: int = 5):
+    def __init__(self, config: AppConfig, analysis_mode: str = "deep", concurrency: int = 5, progress_tracker=None):
         self.config = config
         self.concurrency = concurrency  # 并发处理数量
+        self.progress_tracker = progress_tracker  # 🆕 可选的进度追踪器
         
         # 解析分析模式
         self.analysis_mode = AnalysisMode(analysis_mode)
@@ -66,7 +67,7 @@ class RSSReaderService:
         self.content_extractor = ContentExtractor()
         
         # 🆕 多智能体分析器
-        self.orchestrator = AnalysisOrchestrator(config)
+        self.orchestrator = AnalysisOrchestrator(config, progress_tracker=progress_tracker)
         
         self.email_sender = EmailSender(config.email)
         self.scheduler = Scheduler(config.schedule)
@@ -105,12 +106,25 @@ class RSSReaderService:
         """
         logger.info("starting_fetch_cycle", mode=self.analysis_mode.value, limit=limit)
         
+        # 🆕 启动进度追踪
+        if self.progress_tracker:
+            await self.progress_tracker.start_operation("开始抓取和分析...")
+        
         try:
             # 1. 抓取 RSS
+            if self.progress_tracker:
+                await self.progress_tracker.set_phase(
+                    phase=self.progress_tracker.state.phase.__class__.FETCHING_RSS,
+                    display="抓取 RSS",
+                    message="正在从订阅源获取文章列表..."
+                )
+            
             articles = await self.rss_parser.fetch_all(self.config.feeds)
             
             if not articles:
                 logger.info("no_new_articles")
+                if self.progress_tracker:
+                    await self.progress_tracker.finish(success=True, message="没有新文章")
                 return
             
             # 2. 过滤已存在的文章
@@ -121,6 +135,8 @@ class RSSReaderService:
             
             if not new_articles:
                 logger.info("all_articles_exist", total=len(articles))
+                if self.progress_tracker:
+                    await self.progress_tracker.finish(success=True, message="所有文章已存在")
                 return
             
             logger.info("new_articles_found", count=len(new_articles))
@@ -131,6 +147,14 @@ class RSSReaderService:
                 logger.info("articles_limited", limit=limit, count=len(new_articles))
             
             # 4. 提取正文
+            if self.progress_tracker:
+                await self.progress_tracker.set_phase(
+                    phase=self.progress_tracker.state.phase.__class__.EXTRACTING_CONTENT,
+                    display="提取正文",
+                    message=f"正在提取 {len(new_articles)} 篇文章的正文内容...",
+                    total_items=len(new_articles)
+                )
+            
             articles_with_content = await self.content_extractor.extract_all(new_articles)
             
             # 5. 转换为新的 Article 模型
@@ -155,22 +179,52 @@ class RSSReaderService:
             logger.info("starting_info_centric_processing")
             info_processing_count = 0
             
+            # 🆕 设置分析阶段进度
+            if self.progress_tracker:
+                await self.progress_tracker.set_phase(
+                    phase=self.progress_tracker.state.phase.__class__.ANALYZING,
+                    display="AI 分析",
+                    message=f"开始分析 {len(new_format_articles)} 篇文章...",
+                    total_items=len(new_format_articles)
+                )
+            
             # 并发控制：使用 Semaphore 限制同时处理的文章数量
             CONCURRENT_LIMIT = self.concurrency  # 使用实例配置的并发数
             semaphore = asyncio.Semaphore(CONCURRENT_LIMIT)
             logger.info("concurrent_processing_enabled", workers=CONCURRENT_LIMIT)
             
-            async def process_single_article(article):
+            async def process_single_article(article, idx: int):
                 """带信号量控制的单篇文章处理"""
+                # 🆕 添加并行任务
+                task_id = None
+                if self.progress_tracker:
+                    task_id = await self.progress_tracker.add_task(article.title)
+                
                 async with semaphore:
-                    # 先保存文章到数据库（确保不丢失）
-                    self.db.save_article(article)
-                    # 深度分析并提取信息单元
-                    units = await self.orchestrator.process_article_information_centric(article)
-                    return len(units)
+                    try:
+                        # 先保存文章到数据库（确保不丢失）
+                        self.db.save_article(article)
+                        
+                        # 🆕 更新任务状态
+                        if self.progress_tracker and task_id:
+                            await self.progress_tracker.update_task(task_id, step="提取信息", progress=30)
+                        
+                        # 深度分析并提取信息单元
+                        units = await self.orchestrator.process_article_information_centric(article)
+                        
+                        # 🆕 完成任务
+                        if self.progress_tracker and task_id:
+                            await self.progress_tracker.complete_task(task_id, success=True)
+                        
+                        return len(units)
+                    except Exception as e:
+                        # 🆕 标记任务失败
+                        if self.progress_tracker and task_id:
+                            await self.progress_tracker.complete_task(task_id, success=False, error=str(e))
+                        raise
             
             # 创建所有任务并并发执行
-            tasks = [process_single_article(article) for article in new_format_articles]
+            tasks = [process_single_article(article, i) for i, article in enumerate(new_format_articles)]
             results = await asyncio.gather(*tasks, return_exceptions=True)
             
             # 统计成功处理的数量
@@ -186,11 +240,22 @@ class RSSReaderService:
                        analyzed=len(enriched_articles),
                        info_units_created=info_processing_count,
                        top_picks=sum(1 for a in enriched_articles if a.is_top_pick))
+            
+            # 🆕 完成进度追踪
+            if self.progress_tracker:
+                await self.progress_tracker.finish(
+                    success=True, 
+                    message=f"完成！处理 {len(new_format_articles)} 篇文章，生成 {info_processing_count} 个信息单元"
+                )
         
         except Exception as e:
             logger.error("fetch_cycle_failed", error=str(e))
             import traceback
             traceback.print_exc()
+            
+            # 🆕 记录错误状态
+            if self.progress_tracker:
+                await self.progress_tracker.finish(success=False, message=f"执行失败: {str(e)}")
     
     async def send_daily_digest(self):
         """发送每日简报（使用 AI 智能筛选）"""

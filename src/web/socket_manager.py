@@ -31,6 +31,10 @@ class ConnectionManager:
                 # 忽略发送错误，断开连接会在 receive loop 中处理
                 pass
 
+    async def broadcast_progress(self, event: Dict[str, Any]):
+        """广播进度更新消息"""
+        await self.broadcast(event)
+
 manager = ConnectionManager()
 
 # Structlog 处理器，用于拦截日志并发送到 WebSocket

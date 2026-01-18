@@ -80,6 +80,27 @@
                     </div>
                 </div>
 
+                <!-- 🆕 Progress Panel -->
+                <div id="progress-panel" class="progress-panel hidden">
+                    <div class="progress-header">
+                        <div class="progress-title">
+                            <span class="icon">📊</span>
+                            <h3>执行进度</h3>
+                        </div>
+                        <span id="progress-phase" class="progress-phase">准备中...</span>
+                    </div>
+                    <div class="progress-message" id="progress-message">等待开始...</div>
+                    <div class="progress-bar-container">
+                        <div id="progress-bar" class="progress-bar" style="width: 0%"></div>
+                    </div>
+                    <div class="progress-stats">
+                        <span id="progress-stats-text">0 / 0 完成</span>
+                    </div>
+                    <div id="parallel-tasks" class="parallel-tasks">
+                        <!-- Parallel task items will be rendered here -->
+                    </div>
+                </div>
+
                 <div class="logs-container">
                     <div class="logs-header">
                         <h3>实时运行日志</h3>

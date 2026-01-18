@@ -39,10 +39,11 @@ class AnalysisOrchestrator:
     - DEEP: 完整流程 (所有 Agent)
     """
     
-    def __init__(self, config: AppConfig, enable_trace: bool = True):
+    def __init__(self, config: AppConfig, enable_trace: bool = True, progress_tracker=None):
         self.config = config
         self.llm_service = LLMService(config.ai)
         self.enable_trace = enable_trace
+        self.progress_tracker = progress_tracker  # 🆕 可选的进度追踪器
         
         # 初始化向量存储
         vector_store_path = str(config.storage.database_path).replace(".db", "_vectors")

@@ -122,6 +122,8 @@ class App {
                 const data = JSON.parse(event.data);
                 if (data.type === 'log') {
                     this.appendLog(data);
+                } else if (data.type === 'progress') {
+                    this.handleProgressUpdate(data.data);
                 }
             } catch (e) {
                 console.error('Error parsing msg', e);
@@ -176,7 +178,99 @@ class App {
         }
     }
 
+    // --- 🆕 Progress Handling ---
+
+    handleProgressUpdate(progress) {
+        // Show/hide progress panel based on state
+        if (progress.phase === 'idle') {
+            // Don't hide immediately - keep showing until explicitly completed
+            return;
+        }
+
+        this.showProgressPanel();
+        this.renderProgressUI(progress);
+
+        // Handle completed/error states
+        if (progress.phase === 'completed' || progress.phase === 'error') {
+            const panel = document.getElementById('progress-panel');
+            panel.classList.remove('completed', 'error');
+            panel.classList.add(progress.phase);
+
+            // Also update running state
+            this.setRunningState(false);
+
+            // Auto-hide after a delay for completed state
+            if (progress.phase === 'completed') {
+                setTimeout(() => {
+                    this.hideProgressPanel();
+                }, 5000);
+            }
+        }
+    }
+
+    showProgressPanel() {
+        const panel = document.getElementById('progress-panel');
+        panel.classList.remove('hidden', 'completed', 'error');
+    }
+
+    hideProgressPanel() {
+        const panel = document.getElementById('progress-panel');
+        panel.classList.add('hidden');
+    }
+
+    renderProgressUI(progress) {
+        // Update phase badge
+        const phaseEl = document.getElementById('progress-phase');
+        phaseEl.textContent = progress.phase_display;
+
+        // Update message
+        const messageEl = document.getElementById('progress-message');
+        messageEl.textContent = progress.message || '';
+
+        // Update progress bar
+        const progressBar = document.getElementById('progress-bar');
+        progressBar.style.width = `${progress.overall_progress}%`;
+
+        // Update stats
+        const statsEl = document.getElementById('progress-stats-text');
+        statsEl.textContent = `${progress.completed_items} / ${progress.total_items} 完成`;
+
+        // Render parallel tasks
+        this.renderParallelTasks(progress.parallel_tasks || []);
+    }
+
+    renderParallelTasks(tasks) {
+        const container = document.getElementById('parallel-tasks');
+
+        // Sort tasks: running first, then pending, then completed
+        const sortOrder = { running: 0, pending: 1, completed: 2, failed: 2 };
+        const sortedTasks = [...tasks].sort((a, b) => {
+            return (sortOrder[a.status] || 3) - (sortOrder[b.status] || 3);
+        });
+
+        // Only show recent tasks (max 20)
+        const visibleTasks = sortedTasks.slice(0, 20);
+
+        container.innerHTML = visibleTasks.map(task => {
+            const statusIcon = {
+                pending: '⏳',
+                running: '🔄',
+                completed: '✅',
+                failed: '❌'
+            }[task.status] || '⏳';
+
+            return `
+                <div class="task-item ${task.status}">
+                    <span class="task-status-icon">${statusIcon}</span>
+                    <span class="task-title" title="${task.title}">${task.title}</span>
+                    ${task.step ? `<span class="task-step">${task.step}</span>` : ''}
+                </div>
+            `;
+        }).join('');
+    }
+
     // --- API & State ---
+
 
     async runTask(type) {
         if (this.isRunning) return;

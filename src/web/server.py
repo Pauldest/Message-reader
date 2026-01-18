@@ -18,6 +18,7 @@ sys.path.insert(0, str(ROOT_DIR))
 from src.config import get_config
 from src.main import RSSReaderService
 from src.web.socket_manager import WebSocketLogHandler, manager, ConnectionManager
+from src.web.progress_tracker import ProgressTracker, set_progress_tracker, get_progress_tracker
 
 # 重新配置 structlog 以添加 WebSocket 支持
 def configure_logging():
@@ -41,8 +42,13 @@ is_running = False
 async def lifespan(app: FastAPI):
     global service
     config = get_config()
+    
+    # 初始化进度追踪器
+    progress_tracker = ProgressTracker(broadcast_fn=manager.broadcast_progress)
+    set_progress_tracker(progress_tracker)
+    
     # 初始化服务，默认使用 deep 模式，并发数 5
-    service = RSSReaderService(config, analysis_mode="deep", concurrency=5)
+    service = RSSReaderService(config, analysis_mode="deep", concurrency=5, progress_tracker=progress_tracker)
     logger.info("web_server_started")
     yield
     if service and service._running:
@@ -97,6 +103,15 @@ async def get_status():
         "mode": service.analysis_mode.value if service else "unknown",
         "stats": stats
     }
+
+@app.get("/api/progress/state")
+async def get_progress_state():
+    """Get current progress state (for page refresh recovery)"""
+    tracker = get_progress_tracker()
+    if tracker:
+        return tracker.get_state()
+    return {"phase": "idle", "phase_display": "空闲", "parallel_tasks": []}
+
 
 async def run_worker(limit: int = None, dry_run: bool = False):
     global is_running

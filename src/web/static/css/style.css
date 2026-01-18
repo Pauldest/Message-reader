@@ -550,3 +550,211 @@ input:checked+.slider:before {
     background-color: rgba(255, 255, 255, 0.05);
     color: var(--text-secondary);
 }
+
+/* ============================================
+   🆕 Progress Panel Styles
+   ============================================ */
+
+.progress-panel {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(30, 41, 59, 0.95) 100%);
+    border: 1px solid var(--primary);
+    border-radius: var(--radius);
+    padding: 1.25rem;
+    margin-bottom: 1.5rem;
+    backdrop-filter: blur(10px);
+    box-shadow: 0 4px 20px rgba(59, 130, 246, 0.15);
+    transition: all 0.3s ease;
+}
+
+.progress-panel.hidden {
+    display: none;
+}
+
+.progress-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.75rem;
+}
+
+.progress-title {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.progress-title h3 {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+}
+
+.progress-title .icon {
+    font-size: 1.25rem;
+}
+
+.progress-phase {
+    font-size: 0.85rem;
+    font-weight: 600;
+    padding: 0.25rem 0.75rem;
+    border-radius: 12px;
+    background: var(--primary);
+    color: white;
+    animation: pulse-glow 2s ease-in-out infinite;
+}
+
+@keyframes pulse-glow {
+
+    0%,
+    100% {
+        box-shadow: 0 0 5px rgba(59, 130, 246, 0.5);
+    }
+
+    50% {
+        box-shadow: 0 0 15px rgba(59, 130, 246, 0.8);
+    }
+}
+
+.progress-message {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    margin-bottom: 0.75rem;
+}
+
+.progress-bar-container {
+    height: 8px;
+    background-color: rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 0.5rem;
+}
+
+.progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, var(--primary), #60a5fa, var(--primary));
+    background-size: 200% 100%;
+    border-radius: 4px;
+    transition: width 0.3s ease;
+    animation: shimmer 2s linear infinite;
+}
+
+@keyframes shimmer {
+    0% {
+        background-position: 200% 0;
+    }
+
+    100% {
+        background-position: -200% 0;
+    }
+}
+
+.progress-stats {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    text-align: right;
+    margin-bottom: 1rem;
+}
+
+/* Parallel Tasks */
+.parallel-tasks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.parallel-tasks:empty {
+    display: none;
+}
+
+.task-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 6px;
+    font-size: 0.8rem;
+    color: var(--text-primary);
+    border-left: 3px solid var(--primary);
+    transition: all 0.3s ease;
+    max-width: 300px;
+}
+
+.task-item.running {
+    border-left-color: var(--warning);
+    animation: task-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes task-pulse {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.7;
+    }
+}
+
+.task-item.completed {
+    border-left-color: var(--success);
+    opacity: 0.6;
+}
+
+.task-item.failed {
+    border-left-color: var(--danger);
+    opacity: 0.8;
+}
+
+.task-status-icon {
+    font-size: 0.9rem;
+}
+
+.task-title {
+    flex: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.task-step {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+/* Progress completed state */
+.progress-panel.completed {
+    border-color: var(--success);
+    background: linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgba(30, 41, 59, 0.95) 100%);
+}
+
+.progress-panel.completed .progress-phase {
+    background: var(--success);
+    animation: none;
+}
+
+.progress-panel.completed .progress-bar {
+    background: var(--success);
+    animation: none;
+}
+
+/* Progress error state */
+.progress-panel.error {
+    border-color: var(--danger);
+    background: linear-gradient(135deg, rgba(239, 68, 68, 0.1) 0%, rgba(30, 41, 59, 0.95) 100%);
+}
+
+.progress-panel.error .progress-phase {
+    background: var(--danger);
+    animation: none;
+}
+
+.progress-panel.error .progress-bar {
+    background: var(--danger);
+    animation: none;
+}
