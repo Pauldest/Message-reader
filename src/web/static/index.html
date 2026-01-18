@@ -51,6 +51,11 @@
             <header class="top-bar">
                 <h2 id="page-title">仪表盘</h2>
                 <div class="controls">
+                    <div class="concurrency-control">
+                        <label for="concurrency-slider">并发数:</label>
+                        <input type="range" id="concurrency-slider" min="1" max="50" value="5">
+                        <span id="concurrency-value">5</span>
+                    </div>
                     <button id="btn-run" class="btn primary">
                         <span class="icon">▶</span> 运行抓取 & 分析
                     </button>

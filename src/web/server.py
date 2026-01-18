@@ -65,6 +65,7 @@ app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 class RunRequest(BaseModel):
     limit: Optional[int] = None
     dry_run: bool = False
+    concurrency: int = 5  # 🆕 并发数控制
 
 class FeedRequest(BaseModel):
     name: str
@@ -113,14 +114,18 @@ async def get_progress_state():
     return {"phase": "idle", "phase_display": "空闲", "parallel_tasks": []}
 
 
-async def run_worker(limit: int = None, dry_run: bool = False):
+async def run_worker(limit: int = None, dry_run: bool = False, concurrency: int = 5):
     global is_running
     if is_running:
         return
     
     is_running = True
     try:
-        logger.info("worker_started", limit=limit, dry_run=dry_run)
+        # 🆕 动态设置并发数
+        service.concurrency = concurrency
+        service.orchestrator.concurrency = concurrency
+        
+        logger.info("worker_started", limit=limit, dry_run=dry_run, concurrency=concurrency)
         await service.run_once(limit=limit, dry_run=dry_run)
     except Exception as e:
         logger.error("worker_failed", error=str(e))
@@ -134,8 +139,8 @@ async def run_task(req: RunRequest, background_tasks: BackgroundTasks):
     if is_running:
         raise HTTPException(status_code=400, detail="Task already running")
     
-    background_tasks.add_task(run_worker, limit=req.limit, dry_run=req.dry_run)
-    return {"status": "started"}
+    background_tasks.add_task(run_worker, limit=req.limit, dry_run=req.dry_run, concurrency=req.concurrency)
+    return {"status": "started", "concurrency": req.concurrency}
 
 @app.post("/api/digest")
 async def generate_digest(background_tasks: BackgroundTasks):

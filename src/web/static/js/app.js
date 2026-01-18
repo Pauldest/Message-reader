@@ -73,6 +73,15 @@ class App {
 
         // Feeds
         document.getElementById('btn-add-feed').addEventListener('click', () => this.addFeed());
+
+        // 🆕 Concurrency Slider
+        const concurrencySlider = document.getElementById('concurrency-slider');
+        const concurrencyValue = document.getElementById('concurrency-value');
+        if (concurrencySlider && concurrencyValue) {
+            concurrencySlider.addEventListener('input', (e) => {
+                concurrencyValue.textContent = e.target.value;
+            });
+        }
     }
 
     switchPage(targetBtn) {
@@ -276,7 +285,12 @@ class App {
         if (this.isRunning) return;
 
         const endpoint = type === 'digest' ? '/api/digest' : '/api/run';
-        const body = type === 'fetch' ? { limit: 200 } : {};
+
+        // 🆕 获取并发数设置
+        const concurrencySlider = document.getElementById('concurrency-slider');
+        const concurrency = concurrencySlider ? parseInt(concurrencySlider.value) : 5;
+
+        const body = type === 'fetch' ? { limit: 200, concurrency } : {};
 
         try {
             this.setRunningState(true);
@@ -287,7 +301,7 @@ class App {
             });
             const data = await res.json();
             if (res.ok) {
-                this.logSystem(`任务已启动: ${type}`);
+                this.logSystem(`任务已启动: ${type} (并发: ${concurrency})`);
             } else {
                 this.logSystem(`启动失败: ${data.detail}`);
                 this.setRunningState(false);

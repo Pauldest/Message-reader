@@ -165,6 +165,56 @@ body {
 .controls {
     display: flex;
     gap: 1rem;
+    align-items: center;
+}
+
+/* 🆕 Concurrency Control */
+.concurrency-control {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.75rem;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 6px;
+    border: 1px solid var(--border);
+}
+
+.concurrency-control label {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.concurrency-control input[type="range"] {
+    width: 80px;
+    height: 4px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: var(--border);
+    border-radius: 2px;
+    cursor: pointer;
+}
+
+.concurrency-control input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 16px;
+    height: 16px;
+    background: var(--primary);
+    border-radius: 50%;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.concurrency-control input[type="range"]::-webkit-slider-thumb:hover {
+    background: var(--primary-hover);
+}
+
+#concurrency-value {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--primary);
+    min-width: 1.5rem;
+    text-align: center;
 }
 
 .btn {
