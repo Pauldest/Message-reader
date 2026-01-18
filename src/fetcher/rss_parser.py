@@ -82,13 +82,21 @@ class RSSParser:
     
     def _parse_feed(self, content: str, feed: FeedSource) -> list[Article]:
         """解析 RSS/Atom 内容"""
+        from datetime import timedelta
+        
         parsed = feedparser.parse(content)
         articles = []
+        
+        # 限制只抓取最近 6 个月的文章
+        cutoff_date = datetime.now() - timedelta(days=180)
         
         for entry in parsed.entries:
             try:
                 article = self._entry_to_article(entry, feed)
                 if article:
+                    # 过滤掉超过 6 个月的文章
+                    if article.published_at and article.published_at < cutoff_date:
+                        continue
                     articles.append(article)
             except Exception as e:
                 logger.warning("entry_parse_error",
