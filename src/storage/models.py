@@ -53,6 +53,7 @@ class DigestArticle(BaseModel):
     reasoning: str = ""
     is_top_pick: bool = False
     tags: list[str] = Field(default_factory=list)  # 多层级标签
+    event_time: str = ""  # 事件发生时间
     
     @property
     def tags_display(self) -> str:

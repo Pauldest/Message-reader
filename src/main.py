@@ -263,14 +263,15 @@ class RSSReaderService:
                     
                     top_picks.append(DigestArticle(
                         title=item.get("display_title", ""),
-                        url=self._get_unit_url(item.get("id"), unsent_units), # Helper needed
+                        url=self._get_unit_url(item.get("id"), unsent_units),
                         source=" | ".join(self._get_unit_sources(item.get("id"), unsent_units)),
                         category="深度精选",
                         score=item.get("score", (item.get("reasoning", {}).get("score", 9.0) if isinstance(item.get("reasoning"), dict) else 9.0)),
                         summary=summary_html,
                         reasoning=item.get("reasoning", "") if isinstance(item.get("reasoning"), str) else "",
                         is_top_pick=True,
-                        tags=[], # Tags not in output yet, maybe skip or fetch
+                        tags=[],
+                        event_time=self._get_unit_when(item.get("id"), unsent_units),
                     ))
                     
                 other_articles = []
@@ -285,6 +286,7 @@ class RSSReaderService:
                         reasoning="",
                         is_top_pick=False,
                         tags=[],
+                        event_time=self._get_unit_when(item.get("id"), unsent_units),
                     ))
                     
                 # Mark units as sent
@@ -490,6 +492,13 @@ class RSSReaderService:
             if u.id == unit_id:
                 return list(set(s.source_name for s in u.sources))[:3]
         return []
+
+    def _get_unit_when(self, unit_id: str, units: list) -> str:
+        """Helper to get event time from unit"""
+        for u in units:
+            if u.id == unit_id:
+                return u.when or ""
+        return ""
 
 
     async def run_backfill(self, limit: int = 100):

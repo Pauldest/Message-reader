@@ -72,7 +72,7 @@
             </h3>
             <p style="margin: 0 0 10px 0; font-size: 14px; opacity: 0.9;">{{ article.summary | safe }}</p>
             <div style="font-size: 12px; opacity: 0.8;">
-                📰 {{ article.source }}
+                📰 {{ article.source }}{% if article.event_time %} · 📅 {{ article.event_time }}{% endif %}
             </div>
             {% if article.reasoning %}
             <div
@@ -118,7 +118,10 @@
                         <span style="color: #ef4444; font-weight: bold;">{{ "%.1f"|format(article.score) }}</span>
                         {% endif %}
                     </td>
-                    <td style="padding: 12px 0; color: #6b7280; font-size: 13px;">{{ article.source }}</td>
+                    <td style="padding: 12px 0; color: #6b7280; font-size: 13px;">
+                        {{ article.source }}{% if article.event_time %}<br><span style="color: #9ca3af;">📅 {{
+                            article.event_time }}</span>{% endif %}
+                    </td>
                 </tr>
                 {% endfor %}
             </tbody>
