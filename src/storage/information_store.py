@@ -237,12 +237,12 @@ class InformationStore:
         return sources
 
     def get_unsent_units(self, limit: int = 100) -> List[InformationUnit]:
-        """获取未发送的信息单元"""
+        """获取未发送的信息单元（按事件发生时间倒序，最近发生的优先）"""
         with self.db._get_conn() as conn:
             cursor = conn.execute("""
                 SELECT * FROM information_units 
                 WHERE is_sent = 0
-                ORDER BY analysis_depth_score DESC, importance_score DESC
+                ORDER BY COALESCE(when_time, created_at) DESC
                 LIMIT ?
             """, (limit,))
             
