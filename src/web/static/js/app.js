@@ -20,8 +20,16 @@ class App {
         this.loadStatus();
         this.startStatusPolling();
 
-        // Initial Data Load
-        this.loadDatabaseData();
+        // Initial Data Load - based on currently active view
+        const activeNav = document.querySelector('.nav-item.active');
+        const activeView = activeNav ? activeNav.dataset.target : 'dashboard';
+
+        if (activeView === 'feeds') {
+            this.loadFeeds();
+        } else if (activeView === 'database') {
+            this.loadDatabaseData();
+        }
+        // Dashboard doesn't need initial data load beyond status
     }
 
     bindEvents() {

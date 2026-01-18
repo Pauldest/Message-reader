@@ -1,7 +1,7 @@
 """RSS 解析模块"""
 
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 import aiohttp
 import feedparser
