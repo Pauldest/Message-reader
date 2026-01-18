@@ -99,17 +99,16 @@ class EntityBackfillAgent(BaseAgent):
         logger.info("backfill_completed", success=success_count, total=len(units))
         
     def _get_pending_units(self, limit: int) -> List[InformationUnit]:
-        """获取未在 entity_mentions 中出现的单元"""
+        """获取未进行实体提取的单元"""
         with self.info_store.db._get_conn() as conn:
-            # 简单策略：查询 information_units 的 id，排除在 entity_mentions 中存在的 unit_id
+            # 查询未处理过实体提取的单元
             cursor = conn.execute("""
-                SELECT u.* FROM information_units u
-                LEFT JOIN entity_mentions m ON u.id = m.unit_id
-                WHERE m.id IS NULL
-                ORDER BY u.created_at DESC
+                SELECT * FROM information_units
+                WHERE entity_processed = FALSE OR entity_processed IS NULL
+                ORDER BY created_at DESC
                 LIMIT ?
             """, (limit,))
-            
+
             rows = cursor.fetchall()
             return [self.info_store._row_to_unit(row) for row in rows]
             
@@ -164,13 +163,21 @@ class EntityBackfillAgent(BaseAgent):
                 )
                 logger.debug("processed_entities", count=len(extracted_entities), unit_id=unit.id)
             else:
-                # 即使没有实体，是否也应该标记为已处理？
-                # 目前逻辑是 relying on entity_mentions existence. 
-                # 如果没提取到实体，下次还会查出来。
-                # 可以在 information_units 表加个 flag 'entity_processed'?
-                # 或者插入一个空的 mention? 不太好。
-                # 暂且跳过，或记录到 log。
+                # 即使没有实体，也标记为已处理，避免无限循环
                 logger.info("no_entities_found", unit_id=unit.id)
-                
+
+            # 标记为已处理
+            self._mark_unit_processed(unit.id)
+
         except Exception as e:
             logger.error("backfill_process_error", unit_id=unit.id, error=str(e))
+
+    def _mark_unit_processed(self, unit_id: str):
+        """标记信息单元为已处理实体提取"""
+        with self.info_store.db._get_conn() as conn:
+            conn.execute("""
+                UPDATE information_units
+                SET entity_processed = TRUE, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            """, (unit_id,))
+            conn.commit()

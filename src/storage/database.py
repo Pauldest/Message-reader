@@ -84,9 +84,19 @@ class Database:
                     title TEXT NOT NULL,
                     content TEXT,
                     summary TEXT,
+                    event_time TEXT,
+                    report_time TIMESTAMP,
+                    time_sensitivity TEXT DEFAULT 'normal',
                     analysis_content TEXT,
                     key_insights TEXT,     -- JSON array
                     analysis_depth_score REAL DEFAULT 0,
+                    information_gain REAL DEFAULT 5.0,
+                    actionability REAL DEFAULT 5.0,
+                    scarcity REAL DEFAULT 5.0,
+                    impact_magnitude REAL DEFAULT 5.0,
+                    state_change_type TEXT,
+                    state_change_subtypes TEXT,  -- JSON array
+                    entity_hierarchy TEXT,  -- JSON array of EntityAnchor
                     who TEXT,              -- JSON array
                     what TEXT,
                     when_time TEXT,
@@ -102,8 +112,11 @@ class Database:
                     related_unit_ids TEXT, -- JSON array
                     entities TEXT,         -- JSON array
                     tags TEXT,             -- JSON array
+                    extracted_entities TEXT,  -- JSON array
+                    extracted_relations TEXT,  -- JSON array
                     merged_count INTEGER DEFAULT 1,
                     is_sent BOOLEAN DEFAULT FALSE,
+                    entity_processed BOOLEAN DEFAULT FALSE,  -- 标记是否已进行实体提取
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     unique(id)
@@ -143,6 +156,8 @@ class Database:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_info_fingerprint ON information_units(fingerprint)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_info_created ON information_units(created_at)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_info_score ON information_units(importance_score)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_info_state_type ON information_units(state_change_type)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_info_value ON information_units(information_gain, actionability, scarcity, impact_magnitude)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_source_unit ON source_references(unit_fingerprint)")
             
             conn.commit()

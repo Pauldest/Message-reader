@@ -9,12 +9,19 @@ import structlog
 
 # 全局 WebSocket 连接管理器
 class ConnectionManager:
-    def __init__(self):
+    def __init__(self, max_connections: int = 100):
         self.active_connections: List[WebSocket] = []
+        self.max_connections = max_connections
 
-    async def connect(self, websocket: WebSocket):
+    async def connect(self, websocket: WebSocket) -> bool:
+        """连接客户端，如果超过最大连接数则拒绝"""
+        if len(self.active_connections) >= self.max_connections:
+            await websocket.close(code=1008, reason="Too many connections")
+            return False
+
         await websocket.accept()
         self.active_connections.append(websocket)
+        return True
 
     def disconnect(self, websocket: WebSocket):
         if websocket in self.active_connections:

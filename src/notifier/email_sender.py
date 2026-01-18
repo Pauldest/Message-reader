@@ -1,5 +1,6 @@
 """邮件发送模块"""
 
+import html
 from datetime import datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -161,7 +162,7 @@ class EmailSender:
         
         top_picks_html = ""
         for i, article in enumerate(digest.top_picks, 1):
-            tags_html = f'<span style="background: rgba(255,255,255,0.15); padding: 2px 8px; border-radius: 4px; font-size: 11px; margin-right: 8px;">🏷️ {article.tags_display}</span>' if article.tags else ''
+            tags_html = f'<span style="background: rgba(255,255,255,0.15); padding: 2px 8px; border-radius: 4px; font-size: 11px; margin-right: 8px;">🏷️ {html.escape(article.tags_display)}</span>' if article.tags else ''
             top_picks_html += f"""
             <div style="margin-bottom: 24px; padding: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 12px; color: white;">
                 <div style="display: flex; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
@@ -170,31 +171,31 @@ class EmailSender:
                     {tags_html}
                 </div>
                 <h3 style="margin: 0 0 10px 0; font-size: 18px;">
-                    <a href="{article.url}" style="color: white; text-decoration: none;">{article.title}</a>
+                    <a href="{html.escape(article.url)}" style="color: white; text-decoration: none;">{html.escape(article.title)}</a>
                 </h3>
-                <p style="margin: 0 0 10px 0; font-size: 14px; opacity: 0.9;">{article.summary}</p>
+                <p style="margin: 0 0 10px 0; font-size: 14px; opacity: 0.9;">{html.escape(article.summary)}</p>
                 <div style="font-size: 12px; opacity: 0.8;">
-                    📰 {article.source}
+                    📰 {html.escape(article.source)}
                 </div>
-                {f'<div style="margin-top: 10px; padding: 10px; background: rgba(255,255,255,0.1); border-radius: 8px; font-size: 13px;"><strong>编辑点评：</strong>{article.reasoning}</div>' if article.reasoning else ''}
+                {f'<div style="margin-top: 10px; padding: 10px; background: rgba(255,255,255,0.1); border-radius: 8px; font-size: 13px;"><strong>编辑点评：</strong>{html.escape(article.reasoning)}</div>' if article.reasoning else ''}
             </div>
             """
         
         other_articles_html = ""
         for article in digest.other_articles:
             score_color = "#22c55e" if article.score >= 7 else ("#eab308" if article.score >= 5 else "#ef4444")
-            tags_text = article.tags_display if article.tags else article.source
+            tags_text = html.escape(article.tags_display if article.tags else article.source)
             other_articles_html += f"""
             <tr style="border-bottom: 1px solid #e5e7eb;">
                 <td style="padding: 12px 0;">
-                    <a href="{article.url}" style="color: #1f2937; text-decoration: none; font-weight: 500;">{article.title}</a>
-                    <div style="color: #6b7280; font-size: 13px; margin-top: 4px;">{article.summary}</div>
+                    <a href="{html.escape(article.url)}" style="color: #1f2937; text-decoration: none; font-weight: 500;">{html.escape(article.title)}</a>
+                    <div style="color: #6b7280; font-size: 13px; margin-top: 4px;">{html.escape(article.summary)}</div>
                     <div style="color: #9ca3af; font-size: 11px; margin-top: 2px;">🏷️ {tags_text}</div>
                 </td>
                 <td style="padding: 12px 0; text-align: center; width: 80px;">
                     <span style="color: {score_color}; font-weight: bold;">{article.score:.1f}</span>
                 </td>
-                <td style="padding: 12px 0; color: #6b7280; font-size: 13px; width: 100px;">{article.source}</td>
+                <td style="padding: 12px 0; color: #6b7280; font-size: 13px; width: 100px;">{html.escape(article.source)}</td>
             </tr>
             """
         

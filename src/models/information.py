@@ -3,9 +3,9 @@
 from datetime import datetime
 from enum import Enum
 from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
-from .analysis import Entity
+from .analysis import SimpleEntity
 
 
 class InformationType(str, Enum):
@@ -59,7 +59,7 @@ class EntityAnchor(BaseModel):
     l1_role: str = "主角"     # 角色: 主角/配角/提及
     l2_sector: str            # 细分领域 (基础模型, AI芯片)
     l3_root: str              # 母实体 (人工智能, 半导体芯片)
-    confidence: float = 0.8   # 归类置信度
+    confidence: float = Field(default=0.8, ge=0.0, le=1.0, description="归类置信度")
 
 
 class SourceReference(BaseModel):
@@ -70,12 +70,20 @@ class SourceReference(BaseModel):
     published_at: Optional[datetime] = None
     excerpt: str = ""                    # 相关摘录
     credibility_tier: str = "unknown"    # 信源可信度等级
-    
+
+    @field_validator('url')
+    @classmethod
+    def validate_url(cls, v: str) -> str:
+        """验证URL格式"""
+        if not v.startswith(('http://', 'https://')):
+            raise ValueError('URL must start with http:// or https://')
+        return v
+
     def __eq__(self, other):
         if isinstance(other, SourceReference):
             return self.url == other.url
         return False
-        
+
     def __hash__(self):
         return hash(self.url)
 
@@ -101,13 +109,13 @@ class InformationUnit(BaseModel):
     # === 深度分析 (增强版) ===
     analysis_content: str = ""       # 专属分析板块：包含深度解读、趋势预测、矛盾点分析
     key_insights: List[str] = Field(default_factory=list)  # 关键洞察
-    analysis_depth_score: float = 0.0 # 分析深度评分 (0-1) 用于筛选
+    analysis_depth_score: float = Field(default=0.0, ge=0.0, le=1.0, description="分析深度评分 (0-1) 用于筛选")
     
     # === 4维价值评估 (0-10) ===
-    information_gain: float = 5.0     # 信息增量：是否打破已知共识
-    actionability: float = 5.0        # 行动指导性：是否能指导具体决策
-    scarcity: float = 5.0             # 稀缺性：是否为一手信源
-    impact_magnitude: float = 5.0     # 影响范围：涉及实体的权重
+    information_gain: float = Field(default=5.0, ge=0.0, le=10.0, description="信息增量：是否打破已知共识")
+    actionability: float = Field(default=5.0, ge=0.0, le=10.0, description="行动指导性：是否能指导具体决策")
+    scarcity: float = Field(default=5.0, ge=0.0, le=10.0, description="稀缺性：是否为一手信源")
+    impact_magnitude: float = Field(default=5.0, ge=0.0, le=10.0, description="影响范围：涉及实体的权重")
     
     # === HEX 状态分类 ===
     state_change_type: str = ""       # 主分类: TECH/CAPITAL/REGULATION/ORG/RISK/SENTIMENT
@@ -127,17 +135,17 @@ class InformationUnit(BaseModel):
     # === 来源追溯 ===
     sources: List[SourceReference] = Field(default_factory=list)
     primary_source: str = ""         # 主要来源 URL
-    extraction_confidence: float = 0.0
-    
+    extraction_confidence: float = Field(default=0.0, ge=0.0, le=1.0, description="提取置信度")
+
     # === 分析结果 ===
-    credibility_score: float = 0.0
-    importance_score: float = 0.0
+    credibility_score: float = Field(default=0.0, ge=0.0, le=10.0, description="可信度评分")
+    importance_score: float = Field(default=0.0, ge=0.0, le=10.0, description="重要性评分")
     sentiment: str = "neutral"       # positive/neutral/negative
     impact_assessment: str = ""
     
     # === 关联信息 ===
     related_unit_ids: List[str] = Field(default_factory=list)
-    entities: List[Entity] = Field(default_factory=list)
+    entities: List[SimpleEntity] = Field(default_factory=list)
     tags: List[str] = Field(default_factory=list)
     
     # === 提取的实体和关系 (用于知识图谱构建) ===

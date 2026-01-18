@@ -5,8 +5,8 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 
-class Entity(BaseModel):
-    """识别的实体"""
+class SimpleEntity(BaseModel):
+    """识别的简单实体 (用于分析输出，避免与 entity.Entity 冲突)"""
     name: str
     type: str  # PERSON, COMPANY, PRODUCT, LOCATION, LAW, EVENT, etc.
     description: str = ""

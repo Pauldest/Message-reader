@@ -285,7 +285,7 @@ class InformationStore:
                 return default or []
 
         entities_data = parse_json("entities")
-        from ..models.analysis import Entity  # 延迟导入避免循环依赖
+        from ..models.analysis import SimpleEntity  # 延迟导入避免循环依赖
         entities = [Entity(**e) for e in entities_data]
 
         return InformationUnit(

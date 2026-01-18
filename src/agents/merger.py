@@ -107,6 +107,15 @@ class InformationMergerAgent(BaseAgent):
         
         if result and isinstance(result, dict):
             try:
+                # 先合并所有来源以计算正确的 merged_count
+                all_sources = []
+                seen_urls = set()
+                for u in units:
+                    for s in u.sources:
+                        if s.url not in seen_urls:
+                            all_sources.append(s)
+                            seen_urls.add(s.url)
+
                 # 重新构建 InformationUnit，保留 base_unit 的 ID 和 Fingerprint (或者生成新的？)
                 # 策略：保留 ID，更新内容。Sources 将在外部合并。
                 merged_unit = base_unit.model_copy(update={
@@ -128,24 +137,26 @@ class InformationMergerAgent(BaseAgent):
                     "sentiment": result.get("sentiment", base_unit.sentiment),
                     # entities 和 tags 简单合并去重
                     "tags": list(set(base_unit.tags + result.get("tags", []))),
-                    "merged_count": sum(u.merged_count for u in units) # 累加合并计数
+                    "merged_count": len(all_sources),  # 使用唯一来源数量而非简单累加
+                    "sources": all_sources  # 设置合并后的来源列表
                 })
-                
+
                 # 合并 Entities (需要更复杂的逻辑，这里简化处理：优先使用新结果， fallback 到旧的)
                 # TODO: 实体去重
-                
+
             except Exception as e:
                 logger.error("merge_parsing_failed", error=str(e))
-        
-        # 合并所有 Sources
-        all_sources = []
-        seen_urls = set()
-        for u in units:
-            for s in u.sources:
-                if s.url not in seen_urls:
-                    all_sources.append(s)
-                    seen_urls.add(s.url)
-        merged_unit.sources = all_sources
+        else:
+            # 如果合并失败，仍然需要合并来源
+            all_sources = []
+            seen_urls = set()
+            for u in units:
+                for s in u.sources:
+                    if s.url not in seen_urls:
+                        all_sources.append(s)
+                        seen_urls.add(s.url)
+            merged_unit.sources = all_sources
+            merged_unit.merged_count = len(all_sources)
         
         self.log_complete(0, f"Merged into unit: {merged_unit.title}")
         return merged_unit

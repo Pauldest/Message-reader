@@ -6,7 +6,7 @@ import structlog
 
 from .base import BaseAgent
 from ..models.article import Article
-from ..models.analysis import Entity, KnowledgeGraph
+from ..models.analysis import SimpleEntity, KnowledgeGraph
 from ..models.agent import AgentContext, AgentOutput
 from ..services.llm import LLMService
 from ..storage.vector_store import VectorStore

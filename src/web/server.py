@@ -1,10 +1,12 @@
 """Web Server Module"""
 
 import sys
+import json
 import asyncio
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 import structlog
@@ -34,9 +36,10 @@ def configure_logging():
 configure_logging()
 logger = structlog.get_logger()
 
-# 全局服务实例
+# 全局服务实例和运行锁
 service: Optional[RSSReaderService] = None
 is_running = False
+run_lock = asyncio.Lock()  # 防止并发运行的锁
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -56,6 +59,16 @@ async def lifespan(app: FastAPI):
     logger.info("web_server_stopped")
 
 app = FastAPI(lifespan=lifespan)
+
+# 配置 CORS 中间件
+# 生产环境应该使用具体的域名列表，而不是 ["*"]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://localhost:8000"],  # 在生产环境中配置具体域名
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # 挂载静态文件
 static_dir = Path(__file__).parent / "static"
@@ -79,12 +92,36 @@ class FeedToggleRequest(BaseModel):
 
 @app.websocket("/ws/logs")
 async def websocket_endpoint(websocket: WebSocket):
-    await manager.connect(websocket)
+    """WebSocket endpoint for real-time logs with DoS protection"""
+    # 尝试连接，如果超过最大连接数则拒绝
+    connected = await manager.connect(websocket)
+    if not connected:
+        return
+
     try:
+        # 设置超时以防止僵尸连接
         while True:
-            # 保持连接活跃，也可以接收前端发来的指令
-            data = await websocket.receive_text()
+            try:
+                # 30秒超时，如果客户端没有发送心跳则断开
+                data = await asyncio.wait_for(
+                    websocket.receive_text(),
+                    timeout=30.0
+                )
+                # 可以处理客户端发来的指令（如心跳ping）
+                if data == "ping":
+                    await websocket.send_text("pong")
+            except asyncio.TimeoutError:
+                # 超时，发送ping检查连接是否仍然活跃
+                try:
+                    await websocket.send_text(json.dumps({"type": "ping"}))
+                except Exception:
+                    # 发送失败，连接已断开
+                    break
     except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        logger.error("websocket_error", error=str(e))
+    finally:
         manager.disconnect(websocket)
 
 # --- API ---
@@ -115,42 +152,58 @@ async def get_progress_state():
 
 
 async def run_worker(limit: int = None, dry_run: bool = False, concurrency: int = 5):
+    """工作线程，使用锁防止并发运行"""
     global is_running
-    if is_running:
-        return
-    
-    is_running = True
+
+    # 使用锁确保原子性检查和设置
+    async with run_lock:
+        if is_running:
+            return
+        is_running = True
+
     try:
         # 🆕 动态设置并发数
         service.concurrency = concurrency
         service.orchestrator.concurrency = concurrency
-        
+
         logger.info("worker_started", limit=limit, dry_run=dry_run, concurrency=concurrency)
         await service.run_once(limit=limit, dry_run=dry_run)
     except Exception as e:
         logger.error("worker_failed", error=str(e))
     finally:
-        is_running = False
+        async with run_lock:
+            is_running = False
         logger.info("worker_finished")
 
 @app.post("/api/run")
 async def run_task(req: RunRequest, background_tasks: BackgroundTasks):
+    """启动RSS抓取和分析任务"""
     global is_running
-    if is_running:
-        raise HTTPException(status_code=400, detail="Task already running")
-    
+
+    # 使用锁检查状态，防止race condition
+    async with run_lock:
+        if is_running:
+            raise HTTPException(status_code=400, detail="Task already running")
+
     background_tasks.add_task(run_worker, limit=req.limit, dry_run=req.dry_run, concurrency=req.concurrency)
     return {"status": "started", "concurrency": req.concurrency}
 
 @app.post("/api/digest")
 async def generate_digest(background_tasks: BackgroundTasks):
+    """生成并发送邮件摘要"""
     global is_running
-    if is_running:
-        raise HTTPException(status_code=400, detail="Task already running")
+
+    # 使用锁检查状态，防止race condition
+    async with run_lock:
+        if is_running:
+            raise HTTPException(status_code=400, detail="Task already running")
 
     async def digest_worker():
         global is_running
-        is_running = True
+
+        async with run_lock:
+            is_running = True
+
         try:
             logger.info("digest_generation_started")
             # 调用 run_once 的 digest 模式逻辑
@@ -172,7 +225,8 @@ async def generate_digest(background_tasks: BackgroundTasks):
         except Exception as e:
             logger.error("digest_generation_failed", error=str(e))
         finally:
-            is_running = False
+            async with run_lock:
+                is_running = False
             logger.info("digest_generation_finished")
 
     background_tasks.add_task(digest_worker)

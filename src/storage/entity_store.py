@@ -93,7 +93,8 @@ class EntityStore:
                     valid_to TIMESTAMP,
                     created_at TIMESTAMP,
                     FOREIGN KEY(source_id) REFERENCES entities(id),
-                    FOREIGN KEY(target_id) REFERENCES entities(id)
+                    FOREIGN KEY(target_id) REFERENCES entities(id),
+                    UNIQUE(source_id, target_id, relation_type)  -- 防止重复关系
                 )
             """)
             
@@ -303,56 +304,49 @@ class EntityStore:
     # ==================== 关系管理 ====================
     
     def add_relation(self, relation: EntityRelation) -> EntityRelation:
-        """添加实体关系"""
+        """添加实体关系，使用 INSERT OR REPLACE 避免 race condition"""
         with self.db._get_conn() as conn:
             cursor = conn.cursor()
-            
-            # 检查是否已存在相同关系
+
+            # 先尝试获取现有关系以合并 evidence
             cursor.execute("""
-                SELECT id, evidence_unit_ids FROM entity_relations 
+                SELECT id, evidence_unit_ids FROM entity_relations
                 WHERE source_id = ? AND target_id = ? AND relation_type = ?
             """, (relation.source_id, relation.target_id, relation.relation_type.value))
-            
+
             existing = cursor.fetchone()
-            
+            evidence_to_save = relation.evidence_unit_ids
+
             if existing:
-                # 更新现有关系，合并 evidence
+                # 合并 evidence
                 existing_evidence = json.loads(existing[1]) if existing[1] else []
-                new_evidence = list(set(existing_evidence + relation.evidence_unit_ids))
-                
-                cursor.execute("""
-                    UPDATE entity_relations SET 
-                        evidence_unit_ids = ?,
-                        strength = ?,
-                        confidence = ?
-                    WHERE id = ?
-                """, (json.dumps(new_evidence), relation.strength, relation.confidence, existing[0]))
+                evidence_to_save = list(set(existing_evidence + relation.evidence_unit_ids))
                 relation.id = existing[0]
-            else:
-                # 插入新关系
-                cursor.execute("""
-                    INSERT INTO entity_relations
-                    (id, source_id, target_id, relation_type, strength, confidence,
-                     evidence_unit_ids, valid_from, valid_to, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    relation.id,
-                    relation.source_id,
-                    relation.target_id,
-                    relation.relation_type.value,
-                    relation.strength,
-                    relation.confidence,
-                    json.dumps(relation.evidence_unit_ids),
-                    relation.valid_from,
-                    relation.valid_to,
-                    relation.created_at,
-                ))
-            
+
+            # 使用 INSERT OR REPLACE，原子性操作
+            cursor.execute("""
+                INSERT OR REPLACE INTO entity_relations
+                (id, source_id, target_id, relation_type, strength, confidence,
+                 evidence_unit_ids, valid_from, valid_to, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                relation.id,
+                relation.source_id,
+                relation.target_id,
+                relation.relation_type.value,
+                relation.strength,
+                relation.confidence,
+                json.dumps(evidence_to_save),
+                relation.valid_from,
+                relation.valid_to,
+                relation.created_at,
+            ))
+
             conn.commit()
-        
-        logger.debug("relation_added", 
-                    source=relation.source_id, 
-                    target=relation.target_id, 
+
+        logger.debug("relation_added",
+                    source=relation.source_id,
+                    target=relation.target_id,
                     type=relation.relation_type.value)
         return relation
     

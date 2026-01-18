@@ -9,7 +9,7 @@ from .base import BaseAgent
 from ..models.article import Article
 from ..models.information import InformationUnit, InformationType, SourceReference
 from ..models.agent import AgentContext, AgentOutput
-from ..models.analysis import Entity
+from ..models.analysis import SimpleEntity
 
 logger = structlog.get_logger()
 
@@ -222,7 +222,7 @@ class InformationExtractorAgent(BaseAgent):
         entities = []
         for e in item.get("entities", []):
             if isinstance(e, dict):
-                entities.append(Entity(
+                entities.append(SimpleEntity(
                     name=e.get("name", ""),
                     type=e.get("type", "unknown"),
                     description=e.get("description", "")
