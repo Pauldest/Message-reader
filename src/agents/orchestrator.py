@@ -350,13 +350,44 @@ class AnalysisOrchestrator:
         # Context
         context = AgentContext(
             original_article=article,
-            analysis_mode=AnalysisMode.DEEP
+            analysis_mode=AnalysisMode.DEEP  # Default to DEEP for info centric to get best results
         )
         if self.trace_manager:
             self.trace_manager.start_session(article.url, article.title + " [INFO_FLOW]")
 
         try:
-            # 1. Extract
+            # 🆕 0. OPTIONAL: Run Analysts First (Consultant Mode)
+            # This provides high-quality perspective to the extractor
+            if context.analysis_mode == AnalysisMode.DEEP:
+                logger.info("running_consultant_analysts")
+                
+                # Define which analysts to run
+                analyst_names = ["skeptic", "economist", "detective"]
+                
+                # Run them in parallel using asyncio.gather for true concurrency
+                tasks = []
+                names = []
+                
+                for name in analyst_names:
+                    if name in self.analysts:
+                        tasks.append(self.analysts[name].safe_process(article, context))
+                        names.append(name)
+                
+                if tasks:
+                    results = await asyncio.gather(*tasks)
+                    
+                    analyst_results = {}
+                    for name, result in zip(names, results):
+                        analyst_results[name] = result.data
+                        context.add_trace(result.trace)
+                        # Save trace
+                        self._save_trace(f"Consultant_{name}", article, result)
+                    
+                    # Store reports in context for Extractor to see
+                    context.analyst_reports = analyst_results
+                    logger.info("consultant_phase_complete", reports=list(analyst_results.keys()))
+
+            # 1. Extract (Augmented by Analyst Reports if available)
             units = await self.extractor.extract(article, context)
             logger.info("extracted_units", count=len(units))
             
@@ -402,6 +433,10 @@ class AnalysisOrchestrator:
                     # 更新合并后的单元（使用第一个相似单元的 ID 作为主 ID）
                     merged.id = similar_units[0].id
                     merged.fingerprint = similar_units[0].fingerprint
+                    
+                    # 🆕 保留原有的分析内容（如果有价值）
+                    # 如果新单元有分析师支持，可能比旧的更好，Merger 需要智能判断
+                    # 这里假设 Merger 已经能够处理好
                     
                     await self.info_store.save_unit(merged)
                     final_units.append(merged)

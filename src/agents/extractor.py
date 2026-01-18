@@ -143,12 +143,35 @@ class InformationExtractorAgent(BaseAgent):
         article = input_data
         self.log_start(article.title)
         
+        # 🆕 构建专家顾问报告部分
+        analyst_section = ""
+        if context and context.analyst_reports:
+            reports = []
+            for name, report in context.analyst_reports.items():
+                # 假设 report 是 EnrichedArticle 或类似包含 critique/analysis 的对象
+                # 或者它是一个 AgentOutput.data 字典
+                content = str(report)
+                if hasattr(report, 'critique'):
+                    content = report.critique
+                elif hasattr(report, 'analysis'):
+                    content = report.analysis
+                elif isinstance(report, dict):
+                    content = json.dumps(report, ensure_ascii=False, indent=2)
+                
+                reports.append(f"### {name.upper()} 分析报告\n{content}")
+            
+            if reports:
+                analyst_section = "\n\n## 🧠 专家顾问分析报告 (请重点参考)\n" + "\n\n".join(reports)
+
         user_prompt = f"""
         请分析以下文章，提取信息单元：
 
         标题: {article.title}
         来源: {article.source}
         发布时间: {article.published_at}
+        
+        {analyst_section}
+
         内容:
         {article.content[:20000]}  # 截断过长内容避免 Token 溢出
         """
