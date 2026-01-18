@@ -53,8 +53,9 @@ logger = structlog.get_logger()
 class RSSReaderService:
     """RSS 阅读器服务 (Multi-Agent Version)"""
     
-    def __init__(self, config: AppConfig, analysis_mode: str = "deep"):
+    def __init__(self, config: AppConfig, analysis_mode: str = "deep", concurrency: int = 5):
         self.config = config
+        self.concurrency = concurrency  # 并发处理数量
         
         # 解析分析模式
         self.analysis_mode = AnalysisMode(analysis_mode)
@@ -150,15 +151,34 @@ class RSSReaderService:
             #     legacy_article = self._convert_to_legacy_article(article)
             #     self.db.save_analyzed_article(legacy_article)
             
-            # 7. 🆕 信息为中心的处理流程 (Beta)
+            # 7. 🆕 信息为中心的处理流程 (Beta) - 并发版本
             logger.info("starting_info_centric_processing")
             info_processing_count = 0
-            for article in new_format_articles:
-                # Mark as seen by saving to DB (even if not fully analyzed in legacy way)
-                self.db.save_article(article)
-                
-                units = await self.orchestrator.process_article_information_centric(article)
-                info_processing_count += len(units)
+            
+            # 并发控制：使用 Semaphore 限制同时处理的文章数量
+            CONCURRENT_LIMIT = self.concurrency  # 使用实例配置的并发数
+            semaphore = asyncio.Semaphore(CONCURRENT_LIMIT)
+            logger.info("concurrent_processing_enabled", workers=CONCURRENT_LIMIT)
+            
+            async def process_single_article(article):
+                """带信号量控制的单篇文章处理"""
+                async with semaphore:
+                    # 先保存文章到数据库（确保不丢失）
+                    self.db.save_article(article)
+                    # 深度分析并提取信息单元
+                    units = await self.orchestrator.process_article_information_centric(article)
+                    return len(units)
+            
+            # 创建所有任务并并发执行
+            tasks = [process_single_article(article) for article in new_format_articles]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # 统计成功处理的数量
+            for result in results:
+                if isinstance(result, int):
+                    info_processing_count += result
+                elif isinstance(result, Exception):
+                    logger.error("concurrent_article_failed", error=str(result))
             
             logger.info("fetch_cycle_complete",
                        fetched=len(articles),
@@ -545,6 +565,74 @@ class RSSReaderService:
         print(f"✅ 可视化图谱已生成: {path}")
         print(f"👉 请在浏览器中打开此文件查看交互式图谱")
 
+    async def run_reprocess(self, limit: int = 100):
+        """
+        重新处理「已保存但未生成 units」的文章
+        
+        这些文章可能因为 LLM 超时、网络错误等原因导致分析失败
+        """
+        print(f"🔄 正在查找需要重新处理的文章...")
+        
+        # 查询 articles 表中存在但 information_units 表中没有对应记录的文章
+        with self.db._get_conn() as conn:
+            cursor = conn.execute("""
+                SELECT a.url, a.title, a.content, a.source, a.published_at, a.fetched_at
+                FROM articles a
+                LEFT JOIN information_units u ON a.url = u.primary_source
+                WHERE u.id IS NULL
+                ORDER BY a.fetched_at DESC
+                LIMIT ?
+            """, (limit,))
+            orphaned_articles = cursor.fetchall()
+        
+        if not orphaned_articles:
+            print("✅ 没有需要重新处理的文章")
+            return
+            
+        print(f"📋 找到 {len(orphaned_articles)} 篇待重新处理的文章")
+        logger.info("reprocess_started", count=len(orphaned_articles))
+        
+        # 转换为 Article 对象
+        from src.models.article import Article
+        articles_to_process = []
+        for row in orphaned_articles:
+            article = Article(
+                url=row['url'],
+                title=row['title'],
+                content=row['content'] or "",
+                source=row['source'],
+                published_at=row['published_at'],
+                fetched_at=row['fetched_at'],
+            )
+            articles_to_process.append(article)
+        
+        # 使用并发处理
+        import asyncio
+        semaphore = asyncio.Semaphore(self.concurrency)
+        success_count = 0
+        
+        async def process_one(article):
+            nonlocal success_count
+            async with semaphore:
+                try:
+                    units = await self.orchestrator.process_article_information_centric(article)
+                    if units:
+                        success_count += 1
+                        print(f"  ✅ {article.title[:40]}... ({len(units)} units)")
+                    else:
+                        print(f"  ⚠️  {article.title[:40]}... (0 units)")
+                    return len(units)
+                except Exception as e:
+                    print(f"  ❌ {article.title[:40]}... Error: {str(e)[:50]}")
+                    logger.error("reprocess_failed", url=article.url, error=str(e))
+                    return 0
+        
+        tasks = [process_one(article) for article in articles_to_process]
+        await asyncio.gather(*tasks)
+        
+        print(f"\n🎉 重新处理完成: {success_count}/{len(orphaned_articles)} 篇成功")
+        logger.info("reprocess_completed", success=success_count, total=len(orphaned_articles))
+
 
 def parse_args():
     """解析命令行参数"""
@@ -610,6 +698,13 @@ def parse_args():
         help="运行实体回填任务"
     )
     
+    parser.add_argument(
+        "--concurrency", "-j",
+        type=int,
+        default=5,
+        help="并发处理文章数量 (默认: 5)"
+    )
+    
     
     parser.add_argument(
         "--query", "-q",
@@ -621,6 +716,12 @@ def parse_args():
         "--visualize",
         action="store_true",
         help="生成知识图谱可视化 HTML"
+    )
+    
+    parser.add_argument(
+        "--reprocess",
+        action="store_true",
+        help="重新处理「已保存但未生成 units」的文章"
     )
     
     # 添加 telemetry 子命令
@@ -753,7 +854,7 @@ async def async_main():
         return
     
     # 创建服务
-    service = RSSReaderService(config, analysis_mode=args.mode)
+    service = RSSReaderService(config, analysis_mode=args.mode, concurrency=args.concurrency)
     
     # 处理信号
     loop = asyncio.get_event_loop()
@@ -790,6 +891,11 @@ async def async_main():
     elif args.visualize:
         # 可视化
         service.run_visualize()
+    
+    elif args.reprocess:
+        # 重新处理失败的文章
+        print(f"🔄 开始重新处理失败的文章 (Limit: {args.limit or 100})...")
+        await service.run_reprocess(limit=args.limit or 100)
     
     elif args.once:
         # 运行一次
