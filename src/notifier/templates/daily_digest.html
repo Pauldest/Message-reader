@@ -46,6 +46,24 @@
         </tr>
     </table>
 
+    <!-- 热点趋势 -->
+    {% if digest.hot_trends %}
+    <div
+        style="background: white; padding: 15px 20px; border-radius: 12px; margin-bottom: 25px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+        <h2 style="font-size: 16px; color: #1f2937; margin: 0 0 12px 0;">📊 热点趋势</h2>
+        <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+            {% for trend in digest.hot_trends %}
+            <span
+                style="display: inline-block; padding: 6px 12px; background: {% if trend.trend == 'up' %}#dcfce7{% elif trend.trend == 'down' %}#fee2e2{% elif trend.trend == 'new' %}#dbeafe{% else %}#f3f4f6{% endif %}; border-radius: 20px; font-size: 13px; color: #374151;">
+                {{ trend.trend_icon }} {{ trend.name }}
+                <span style="color: #6b7280; font-size: 11px;">({{ trend.count }}次{% if trend.change_pct != 0 and
+                    trend.trend != 'new' %}, {{ "%.0f"|format(trend.change_pct) }}%{% endif %})</span>
+            </span>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
     <!-- 精选文章 -->
     {% if digest.top_picks %}
     <div style="margin-bottom: 40px;">
@@ -78,6 +96,17 @@
             <div
                 style="margin-top: 10px; padding: 10px; background: rgba(255,255,255,0.1); border-radius: 8px; font-size: 13px;">
                 <strong>编辑点评：</strong>{{ article.reasoning }}
+            </div>
+            {% endif %}
+            {% if article.related_articles %}
+            <div
+                style="margin-top: 10px; padding: 8px 10px; background: rgba(255,255,255,0.08); border-radius: 8px; font-size: 12px;">
+                <strong>🔗 相关阅读：</strong>
+                {% for rel in article.related_articles %}
+                <a href="#" style="color: rgba(255,255,255,0.9); text-decoration: underline; margin-right: 8px;">{{
+                    rel.title[:30] }}{% if rel.title|length > 30 %}...{% endif %}</a>{% if not loop.last %} | {% endif
+                %}
+                {% endfor %}
             </div>
             {% endif %}
         </div>

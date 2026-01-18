@@ -584,3 +584,142 @@ class EntityStore:
                 "mentions": mention_count,
                 "relations": relation_count,
             }
+
+    # ==================== 日报增强功能 ====================
+    
+    def get_hot_entities(self, days: int = 7, limit: int = 10) -> List[Dict]:
+        """
+        获取热点实体及其趋势变化
+        
+        Returns:
+            [{"entity": Entity, "recent_count": int, "previous_count": int, "trend": "up/down/stable", "change_pct": float}]
+        """
+        from datetime import timedelta
+        
+        with self.db._get_conn() as conn:
+            cursor = conn.cursor()
+            
+            now = datetime.now()
+            recent_start = now - timedelta(days=days)
+            previous_start = now - timedelta(days=days * 2)
+            
+            # 获取近期热门实体
+            cursor.execute("""
+                SELECT e.id, e.canonical_name, e.type, 
+                       COUNT(m.id) as recent_count,
+                       e.mention_count as total_count
+                FROM entities e
+                JOIN entity_mentions m ON e.id = m.entity_id
+                WHERE m.created_at >= ?
+                GROUP BY e.id
+                ORDER BY recent_count DESC
+                LIMIT ?
+            """, (recent_start, limit))
+            
+            hot_entities = []
+            for row in cursor.fetchall():
+                entity_id = row[0]
+                
+                # 查询上一周期的提及次数
+                cursor.execute("""
+                    SELECT COUNT(*) FROM entity_mentions
+                    WHERE entity_id = ? AND created_at >= ? AND created_at < ?
+                """, (entity_id, previous_start, recent_start))
+                previous_count = cursor.fetchone()[0]
+                
+                recent_count = row[3]
+                
+                # 计算趋势
+                if previous_count == 0:
+                    trend = "new" if recent_count > 0 else "stable"
+                    change_pct = 100.0 if recent_count > 0 else 0.0
+                else:
+                    change_pct = ((recent_count - previous_count) / previous_count) * 100
+                    if change_pct > 20:
+                        trend = "up"
+                    elif change_pct < -20:
+                        trend = "down"
+                    else:
+                        trend = "stable"
+                
+                entity = self.get_entity(entity_id)
+                if entity:
+                    hot_entities.append({
+                        "entity": entity,
+                        "recent_count": recent_count,
+                        "previous_count": previous_count,
+                        "trend": trend,
+                        "change_pct": round(change_pct, 1)
+                    })
+            
+            return hot_entities
+    
+    def get_related_units_by_entity(self, entity_id: str, exclude_unit_ids: List[str] = None, limit: int = 5) -> List[Dict]:
+        """
+        获取与指定实体相关的其他文章
+        
+        Args:
+            entity_id: 实体 ID
+            exclude_unit_ids: 要排除的文章 ID 列表（已在精选中的）
+            limit: 返回数量
+            
+        Returns:
+            [{"unit_id": str, "title": str, "summary": str, "role": str}]
+        """
+        with self.db._get_conn() as conn:
+            cursor = conn.cursor()
+            
+            exclude_clause = ""
+            params = [entity_id]
+            
+            if exclude_unit_ids:
+                placeholders = ",".join("?" * len(exclude_unit_ids))
+                exclude_clause = f"AND m.unit_id NOT IN ({placeholders})"
+                params.extend(exclude_unit_ids)
+            
+            params.append(limit)
+            
+            cursor.execute(f"""
+                SELECT m.unit_id, u.title, u.summary, m.role
+                FROM entity_mentions m
+                JOIN information_units u ON m.unit_id = u.id
+                WHERE m.entity_id = ? {exclude_clause}
+                ORDER BY m.created_at DESC
+                LIMIT ?
+            """, params)
+            
+            results = []
+            for row in cursor.fetchall():
+                results.append({
+                    "unit_id": row[0],
+                    "title": row[1],
+                    "summary": row[2][:100] if row[2] else "",
+                    "role": row[3] or "相关"
+                })
+            
+            return results
+    
+    def get_entities_for_units(self, unit_ids: List[str]) -> Dict[str, List[Entity]]:
+        """
+        获取多个信息单元涉及的实体
+        
+        Returns:
+            {unit_id: [Entity, ...]}
+        """
+        with self.db._get_conn() as conn:
+            cursor = conn.cursor()
+            
+            result = {}
+            for unit_id in unit_ids:
+                cursor.execute("""
+                    SELECT DISTINCT e.* FROM entities e
+                    JOIN entity_mentions m ON e.id = m.entity_id
+                    WHERE m.unit_id = ?
+                    ORDER BY e.mention_count DESC
+                    LIMIT 5
+                """, (unit_id,))
+                
+                entities = [self._row_to_entity(row) for row in cursor.fetchall()]
+                result[unit_id] = entities
+            
+            return result

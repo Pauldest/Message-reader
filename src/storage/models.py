@@ -54,6 +54,8 @@ class DigestArticle(BaseModel):
     is_top_pick: bool = False
     tags: list[str] = Field(default_factory=list)  # 多层级标签
     event_time: str = ""  # 事件发生时间
+    unit_id: str = ""  # 用于关联相关阅读
+    related_articles: list[dict] = Field(default_factory=list)  # 相关阅读推荐
     
     @property
     def tags_display(self) -> str:
@@ -67,6 +69,8 @@ class DailyDigest(BaseModel):
     top_picks: list[DigestArticle] = Field(default_factory=list)
     other_articles: list[DigestArticle] = Field(default_factory=list)
     low_value_articles: list[DigestArticle] = Field(default_factory=list)  # 低价值内容
+    hot_trends: list[dict] = Field(default_factory=list)  # 热点趋势
+    related_readings: dict = Field(default_factory=dict)  # 相关阅读 {unit_id: [related articles]}
     total_fetched: int = 0
     total_analyzed: int = 0
     total_filtered: int = 0

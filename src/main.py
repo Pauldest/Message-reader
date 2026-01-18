@@ -272,6 +272,7 @@ class RSSReaderService:
                         is_top_pick=True,
                         tags=[],
                         event_time=self._get_unit_when(item.get("id"), unsent_units),
+                        unit_id=item.get("id", ""),
                     ))
                     
                 other_articles = []
@@ -309,12 +310,64 @@ class RSSReaderService:
                 sent_ids = [item.get("id") for item in curation_result["top_picks"] + curation_result["quick_reads"] + curation_result.get("excluded", [])]
                 self.info_store.mark_units_sent(sent_ids)
                 
+                # 🆕 知识图谱增强：热点趋势分析
+                hot_trends = []
+                try:
+                    trend_data = self.entity_store.get_hot_entities(days=7, limit=8)
+                    for item in trend_data:
+                        entity = item["entity"]
+                        trend_icon = {"up": "📈", "down": "📉", "stable": "➡️", "new": "🆕"}.get(item["trend"], "")
+                        hot_trends.append({
+                            "name": entity.canonical_name,
+                            "type": entity.type.value if hasattr(entity.type, 'value') else str(entity.type),
+                            "count": item["recent_count"],
+                            "trend": item["trend"],
+                            "trend_icon": trend_icon,
+                            "change_pct": item["change_pct"]
+                        })
+                    logger.info("hot_trends_generated", count=len(hot_trends))
+                except Exception as e:
+                    logger.warning("hot_trends_failed", error=str(e))
+                
+                # 🆕 知识图谱增强：相关阅读推荐
+                related_readings = {}
+                try:
+                    # 获取精选文章涉及的实体
+                    top_unit_ids = [item.get("id") for item in curation_result["top_picks"]]
+                    entities_map = self.entity_store.get_entities_for_units(top_unit_ids)
+                    
+                    for unit_id, entities in entities_map.items():
+                        if entities:
+                            # 取第一个主要实体的相关文章
+                            main_entity = entities[0]
+                            related = self.entity_store.get_related_units_by_entity(
+                                main_entity.id, 
+                                exclude_unit_ids=top_unit_ids,
+                                limit=3
+                            )
+                            if related:
+                                related_readings[unit_id] = {
+                                    "entity_name": main_entity.canonical_name,
+                                    "articles": related
+                                }
+                    logger.info("related_readings_generated", count=len(related_readings))
+                except Exception as e:
+                    logger.warning("related_readings_failed", error=str(e))
+                
+                # 填充 top_picks 的相关阅读
+                for article in top_picks:
+                    if article.unit_id in related_readings:
+                        related_data = related_readings[article.unit_id]
+                        article.related_articles = related_data.get("articles", [])
+                
                 # Create Digest Object
                 digest = DailyDigest(
                     date=datetime.now(),
                     top_picks=top_picks,
                     other_articles=other_articles,
                     low_value_articles=low_value_articles,
+                    hot_trends=hot_trends,
+                    related_readings=related_readings,
                     total_fetched=len(unsent_units),
                     total_analyzed=len(unsent_units),
                     total_filtered=len(top_picks) + len(other_articles) + len(low_value_articles),
