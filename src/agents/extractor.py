@@ -241,7 +241,10 @@ class InformationExtractorAgent(BaseAgent):
         # 处理4维评分
         def safe_score(val, default=5.0):
             try:
-                score = float(val) if val else default
+                score = float(val) if val is not None else default
+                # 自动检测 0-1 分制并归一化到 1-10
+                if score <= 1.0 and score > 0:
+                     score *= 10
                 return max(1.0, min(10.0, score))
             except:
                 return default
@@ -296,8 +299,8 @@ class InformationExtractorAgent(BaseAgent):
             extraction_confidence=float(item.get("extraction_confidence", 0.8)),
             
             # 分析结果
-            credibility_score=float(item.get("credibility_score", 0.5)),
-            importance_score=float(item.get("importance_score", 0.5)),
+            credibility_score=safe_score(item.get("credibility_score"), 5.0),
+            importance_score=safe_score(item.get("importance_score"), 5.0),
             sentiment=item.get("sentiment", "neutral"),
             impact_assessment=item.get("impact_assessment", ""),
             

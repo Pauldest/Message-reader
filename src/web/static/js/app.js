@@ -4,7 +4,7 @@ class App {
     constructor() {
         this.socket = null;
         this.connected = false;
-        
+
         // State
         this.currentTable = 'articles';
         this.currentPage = 0;
@@ -19,7 +19,7 @@ class App {
         this.connectWebSocket();
         this.loadStatus();
         this.startStatusPolling();
-        
+
         // Initial Data Load
         this.loadDatabaseData();
     }
@@ -34,7 +34,7 @@ class App {
         document.getElementById('btn-run').addEventListener('click', () => this.runTask('fetch'));
         document.getElementById('btn-digest').addEventListener('click', () => this.runTask('digest'));
         document.getElementById('btn-stop').addEventListener('click', () => this.stopTask());
-        
+
         // Logs
         document.getElementById('btn-clear-logs').addEventListener('click', () => {
             document.getElementById('terminal-output').innerHTML = '';
@@ -68,12 +68,12 @@ class App {
         // Update Nav
         document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
         targetBtn.classList.add('active');
-        
+
         // Show View
         const targetId = targetBtn.dataset.target;
         document.querySelectorAll('.view-section').forEach(v => v.classList.remove('active'));
         document.getElementById(`view-${targetId}`).classList.add('active');
-        
+
         // Update Title
         document.getElementById('page-title').innerText = targetBtn.innerText.trim();
     }
@@ -83,22 +83,22 @@ class App {
     connectWebSocket() {
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const wsUrl = `${protocol}//${window.location.host}/ws/logs`;
-        
+
         this.socket = new WebSocket(wsUrl);
-        
+
         this.socket.onopen = () => {
             console.log('Connected to WebSocket');
             this.connected = true;
             this.logSystem('已连接到实时日志流');
         };
-        
+
         this.socket.onclose = () => {
             console.log('Disconnected');
             this.connected = false;
             this.logSystem('连接断开，正在重试...');
             setTimeout(() => this.connectWebSocket(), 3000);
         };
-        
+
         this.socket.onmessage = (event) => {
             try {
                 const data = JSON.parse(event.data);
@@ -115,28 +115,28 @@ class App {
         const terminal = document.getElementById('terminal-output');
         const template = document.getElementById('log-entry-template');
         const clone = template.content.cloneNode(true);
-        
+
         const el = clone.querySelector('.log-entry');
         el.dataset.level = log.level;
-        
+
         clone.querySelector('.log-time').textContent = log.timestamp.split('T')[1].split('.')[0];
         clone.querySelector('.log-level').textContent = log.level;
         clone.querySelector('.log-logger').textContent = log.logger || 'root';
-        
+
         // 构建消息内容，如果有 context data 则附加上
         let msg = log.event;
         if (log.context && Object.keys(log.context).length > 0) {
             msg += ' ' + JSON.stringify(log.context);
         }
         clone.querySelector('.log-message').textContent = msg;
-        
+
         terminal.appendChild(clone);
-        
+
         // Auto Scroll
         if (document.getElementById('auto-scroll').checked) {
             terminal.scrollTop = terminal.scrollHeight;
         }
-        
+
         // Cleanup old logs if too many
         if (terminal.children.length > 1000) {
             terminal.removeChild(terminal.firstChild);
@@ -156,10 +156,10 @@ class App {
 
     async runTask(type) {
         if (this.isRunning) return;
-        
+
         const endpoint = type === 'digest' ? '/api/digest' : '/api/run';
-        const body = type === 'fetch' ? { limit: 200 } : {}; 
-        
+        const body = type === 'fetch' ? { limit: 200 } : {};
+
         try {
             this.setRunningState(true);
             const res = await fetch(endpoint, {
@@ -179,7 +179,7 @@ class App {
             this.setRunningState(false);
         }
     }
-    
+
     async stopTask() {
         try {
             await fetch('/api/stop', { method: 'POST' });
@@ -195,7 +195,7 @@ class App {
         const btnDigest = document.getElementById('btn-digest');
         const btnStop = document.getElementById('btn-stop');
         const statusBadge = document.getElementById('system-state');
-        
+
         if (running) {
             btnRun.disabled = true;
             btnDigest.disabled = true;
@@ -217,18 +217,18 @@ class App {
         try {
             const res = await fetch('/api/status');
             const data = await res.json();
-            
+
             this.setRunningState(data.running);
             document.getElementById('system-mode').textContent = data.mode;
-            
+
             // Update Stats if available
             if (data.stats) {
-                if (data.stats.fetched_count !== undefined) 
+                if (data.stats.fetched_count !== undefined)
                     document.getElementById('stat-fetched').textContent = data.stats.fetched_count;
-                if (data.stats.analyzed_count !== undefined) 
+                if (data.stats.analyzed_count !== undefined)
                     document.getElementById('stat-analyzed').textContent = data.stats.analyzed_count;
             }
-            
+
         } catch (e) {
             console.error('Status fetch failed', e);
         }
@@ -244,32 +244,46 @@ class App {
         const tbody = document.getElementById('db-table-body');
         const thead = document.getElementById('db-table-head');
         tbody.innerHTML = '<tr><td colspan="5">Loading...</td></tr>';
-        
+
         try {
             const res = await fetch(`/api/db/${this.currentTable}?limit=${this.pageSize}&offset=${this.currentPage * this.pageSize}`);
             const data = await res.json();
-            
+
             if (data.length === 0) {
                 tbody.innerHTML = '<tr><td colspan="5">No data found</td></tr>';
                 return;
             }
-            
+
             // Render Header
             const columns = Object.keys(data[0]);
             thead.innerHTML = '<tr>' + columns.map(c => `<th>${c}</th>`).join('') + '</tr>';
-            
+
             // Render Body
+            const escapeHtml = (unsafe) => {
+                return String(unsafe)
+                    .replace(/&/g, "&amp;")
+                    .replace(/</g, "&lt;")
+                    .replace(/>/g, "&gt;")
+                    .replace(/"/g, "&quot;")
+                    .replace(/'/g, "&#039;");
+            }
+
             tbody.innerHTML = data.map(row => {
                 return '<tr>' + columns.map(col => {
                     let val = row[col];
+                    if (val === null || val === undefined) val = '';
                     if (typeof val === 'object') val = JSON.stringify(val);
-                    if (String(val).length > 50) val = String(val).substring(0, 50) + '...';
-                    return `<td title="${String(row[col]).replace(/"/g, '&quot;')}">${val}</td>`;
+
+                    let displayVal = String(val);
+                    if (displayVal.length > 50) displayVal = displayVal.substring(0, 50) + '...';
+
+                    // Escape HTML to prevent rendering images/scripts
+                    return `<td title="${String(val).replace(/"/g, '&quot;')}">${escapeHtml(displayVal)}</td>`;
                 }).join('') + '</tr>';
             }).join('');
-            
+
             document.getElementById('page-info').textContent = `Page ${this.currentPage + 1}`;
-            
+
         } catch (e) {
             tbody.innerHTML = `<tr><td colspan="5" style="color:var(--danger)">Error: ${e.message}</td></tr>`;
         }
