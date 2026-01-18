@@ -66,6 +66,7 @@ class DailyDigest(BaseModel):
     date: datetime
     top_picks: list[DigestArticle] = Field(default_factory=list)
     other_articles: list[DigestArticle] = Field(default_factory=list)
+    low_value_articles: list[DigestArticle] = Field(default_factory=list)  # 低价值内容
     total_fetched: int = 0
     total_analyzed: int = 0
     total_filtered: int = 0

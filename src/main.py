@@ -288,9 +288,25 @@ class RSSReaderService:
                         tags=[],
                         event_time=self._get_unit_when(item.get("id"), unsent_units),
                     ))
+                
+                # Build low value articles from excluded
+                low_value_articles = []
+                for item in curation_result.get("excluded", []):
+                    low_value_articles.append(DigestArticle(
+                        title=item.get("display_title", ""),
+                        url=self._get_unit_url(item.get("id"), unsent_units),
+                        source="低价值",
+                        category="其他",
+                        score=5.0,
+                        summary=item.get("one_line_summary", ""),
+                        reasoning=item.get("reason", ""),
+                        is_top_pick=False,
+                        tags=[],
+                        event_time=self._get_unit_when(item.get("id"), unsent_units),
+                    ))
                     
-                # Mark units as sent
-                sent_ids = [item.get("id") for item in curation_result["top_picks"] + curation_result["quick_reads"]]
+                # Mark units as sent (include excluded as well)
+                sent_ids = [item.get("id") for item in curation_result["top_picks"] + curation_result["quick_reads"] + curation_result.get("excluded", [])]
                 self.info_store.mark_units_sent(sent_ids)
                 
                 # Create Digest Object
@@ -298,9 +314,10 @@ class RSSReaderService:
                     date=datetime.now(),
                     top_picks=top_picks,
                     other_articles=other_articles,
-                    total_fetched=len(unsent_units), # Approx
+                    low_value_articles=low_value_articles,
+                    total_fetched=len(unsent_units),
                     total_analyzed=len(unsent_units),
-                    total_filtered=len(top_picks) + len(other_articles),
+                    total_filtered=len(top_picks) + len(other_articles) + len(low_value_articles),
                 )
             
             else:

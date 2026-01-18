@@ -217,8 +217,27 @@ class InformationCuratorAgent(BaseAgent):
         # 5. 后处理：强制执行硬性限制和分数过滤
         result = self._enforce_limits(result, max_top_picks)
         result = self._filter_low_scores(result)
+        
+        # 6. 计算被排除的内容
+        selected_ids = set()
+        for item in result.get("top_picks", []):
+            selected_ids.add(item.get("id"))
+        for item in result.get("quick_reads", []):
+            selected_ids.add(item.get("id"))
+        
+        # 从候选列表中找出未被选中的
+        excluded = []
+        for u in candidates:
+            if u.id not in selected_ids:
+                excluded.append({
+                    "id": u.id,
+                    "display_title": u.title,
+                    "one_line_summary": u.summary[:60] if u.summary else u.title[:60],
+                    "reason": "综合评分未达入选标准"
+                })
+        result["excluded"] = excluded
             
-        self.log_complete(0, f"Selected {len(result.get('top_picks', []))} top picks, {len(result.get('quick_reads', []))} quick reads")
+        self.log_complete(0, f"Selected {len(result.get('top_picks', []))} top picks, {len(result.get('quick_reads', []))} quick reads, {len(excluded)} excluded")
         return result
     
     def _extract_domain(self, url: str) -> str:
